@@ -27,6 +27,9 @@ from __future__ import annotations
 
 import logging
 import os
+import io
+import sys
+from datetime import datetime
 from pathlib import Path
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -64,6 +67,98 @@ if USE_CLIP:
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
+
+# ─── experiment logging ───────────────────────────────────────────────────────
+EXPERIMENT_LOG_FILE = "experiment_logs.md"
+
+class ExperimentLogger:
+    """Captures log output and writes experiment results to markdown"""
+    
+    def __init__(self):
+        self.log_capture = io.StringIO()
+        self.handler: Optional[logging.Handler] = None
+        self.comparison_results: List[Dict[str, Any]] = []
+        self.input_count = 0
+        self.output_count = 0
+    
+    def start_capture(self) -> None:
+        self.handler = logging.StreamHandler(self.log_capture)
+        self.handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        logger.addHandler(self.handler)
+    
+    def stop_capture(self) -> str:
+        if self.handler:
+            logger.removeHandler(self.handler)
+        return self.log_capture.getvalue()
+    
+    def add_comparison(self, img_a: str, img_b: str, mtb: float, edge: float,
+                       ssim: float, clip: float, pdq_hd: int, score: float,
+                       dropped: bool, drop_reason: str) -> None:
+        self.comparison_results.append({
+            "img_a": Path(img_a).stem,
+            "img_b": Path(img_b).stem,
+            "mtb": mtb,
+            "edge": edge,
+            "ssim": ssim,
+            "clip": clip,
+            "pdq_hd": pdq_hd,
+            "score": score,
+            "dropped": dropped,
+            "drop_reason": drop_reason
+        })
+    
+    def write_experiment_log(self, experiment_name: str, terminal_output: str, log_file: str) -> None:
+        log_path = Path(log_file)
+        
+        # Build the complete markdown file
+        entry = f"""# {experiment_name}
+
+**Date:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+## Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| USE_CLIP | {USE_CLIP} |
+| WEIGHT_MTB | {WEIGHT_MTB} |
+| WEIGHT_SSIM | {WEIGHT_SSIM} |
+| WEIGHT_CLIP | {WEIGHT_CLIP} |
+| WEIGHT_PDQ | {WEIGHT_PDQ} |
+| COMPOSITE_DUP_THRESHOLD | {COMPOSITE_DUP_THRESHOLD} |
+| MTB_HARD_FLOOR | {MTB_HARD_FLOOR} |
+| PDQ_HD_CEIL | {PDQ_HD_CEIL} |
+
+## Results
+
+| Image A | Image B | MTB % | Edge % | SSIM % | CLIP % | PDQ HD | SCORE | Dropped? |
+|---------|---------|-------|--------|--------|--------|--------|-------|----------|
+"""
+        for r in self.comparison_results:
+            dropped_str = f"Yes ({r['drop_reason']})" if r["dropped"] else "No"
+            if not r["dropped"] and r["drop_reason"]:
+                dropped_str = f"No ({r['drop_reason']})"
+            entry += f"| {r['img_a']} | {r['img_b']} | {r['mtb']:.1f} | {r['edge']:.1f} | {r['ssim']:.1f} | {r['clip']:.1f} | {r['pdq_hd']} | {r['score']:.2f} | {dropped_str} |\n"
+        
+        entry += f"""
+## Summary
+
+- **Input:** {self.input_count} groups
+- **Output:** {self.output_count} groups
+- **Duplicates removed:** {self.input_count - self.output_count}
+
+## Terminal Output
+
+```
+{terminal_output.strip()}
+```
+"""
+        # Write to file (overwrite)
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(entry)
+        
+        logger.info(f"Experiment logged to {log_path}")
+
+_experiment_logger: Optional[ExperimentLogger] = None
 
 # ─── tuning knobs ─────────────────────────────────────────────────────────────
 MTB_SIZE, EDGE_SIZE, SSIM_SIZE = 640, 640, 320
@@ -372,19 +467,45 @@ def remove_near_duplicates(
 
         # decision logic
         trigger_metrics = []
+        drop_reason = ""
         if score >= dup_threshold:
             trigger_metrics.append(f"SCORE({score:.2f}≥{dup_threshold})")
         if mtb < mtb_floor:
             trigger_metrics.append(f"MTB_FLOOR_FAIL({mtb:.1f}<{mtb_floor})")
+            drop_reason = f"MTB < {mtb_floor}"
+            # Log comparison even if not dropped
+            if _experiment_logger:
+                _experiment_logger.add_comparison(
+                    mids[i], mids[j], mtb, edge, ssim, clip, hd, score,
+                    dropped=False, drop_reason=drop_reason
+                )
             continue
         if hd >= pdq_ceil:
             trigger_metrics.append(f"PDQ_HD({hd:.0f}≥{pdq_ceil})")
+            drop_reason = f"PDQ >= {pdq_ceil}"
+            # Log comparison even if not dropped
+            if _experiment_logger:
+                _experiment_logger.add_comparison(
+                    mids[i], mids[j], mtb, edge, ssim, clip, hd, score,
+                    dropped=False, drop_reason=drop_reason
+                )
             continue
 
         dup = (score >= dup_threshold) and (mtb >= mtb_floor) and (hd < pdq_ceil)
 
         if dup:
             _drop(i, mtb, edge, hd, ssim, clip, score, trigger_metrics, is_aerial_i)
+            if _experiment_logger:
+                _experiment_logger.add_comparison(
+                    mids[i], mids[j], mtb, edge, ssim, clip, hd, score,
+                    dropped=True, drop_reason="duplicate"
+                )
+        else:
+            if _experiment_logger:
+                _experiment_logger.add_comparison(
+                    mids[i], mids[j], mtb, edge, ssim, clip, hd, score,
+                    dropped=False, drop_reason=f"SCORE < {dup_threshold}" if score < dup_threshold else ""
+                )
 
     final_groups = [g for g, k in zip(groups, keep) if k]
     logger.info("[RESULT] stacks: %d → %d", len(groups), len(final_groups))
@@ -393,12 +514,34 @@ def remove_near_duplicates(
 
 
 if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Near-duplicate image remover")
+    parser.add_argument("--log-experiment", type=str, default=None,
+                        help="Name for this experiment")
+    parser.add_argument("--log-file", type=str, default="experiment_logs.md",
+                        help="File to log experiment results to")
+    args = parser.parse_args()
+    
     groups = [
         [r"photos-706-winchester-blvd--los-gatos--ca-9\008_Nancy Peppin - IMG_0009.jpg"],
         [r"photos-706-winchester-blvd--los-gatos--ca-9\009_Nancy Peppin - IMG_0003.jpg"],
         [r"photos-75-knollview-way--san-francisco--ca\050_Scott Wall - DSC_0098.jpg"],
         [r"photos-75-knollview-way--san-francisco--ca\053_Scott Wall - DSC_0143.jpg"],
     ]
+    
+    # Setup experiment logging if requested
+    if args.log_experiment:
+        _experiment_logger = ExperimentLogger()
+        _experiment_logger.start_capture()
+        _experiment_logger.input_count = len(groups)
+    
     logger.info(f"Number of groups before deduplication: {len(groups)}")
     filtered = remove_near_duplicates(groups, deduplication_flag=1, full_scan=True)
     logger.info(f"Number of groups after deduplication: {len(filtered)}")
+    
+    # Write experiment log if requested
+    if args.log_experiment and _experiment_logger:
+        _experiment_logger.output_count = len(filtered)
+        terminal_output = _experiment_logger.stop_capture()
+        _experiment_logger.write_experiment_log(args.log_experiment, terminal_output, args.log_file)
