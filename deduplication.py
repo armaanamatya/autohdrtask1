@@ -52,7 +52,7 @@ try:
 except ImportError:
     _pil_available = False
 
-USE_CLIP = False              # flip to True if you have open_clip-torch installed
+USE_CLIP = True               # flip to True if you have open_clip-torch installed
 if USE_CLIP:
     try:
         import torch, open_clip
@@ -77,10 +77,10 @@ PDQ_HD_CEIL    = 115      # HD ≥ this ⇒ totally different
 
 
 # weighted-score config for REGULAR photos (weights must sum to 1.0)
-WEIGHT_MTB  = 0.55
+WEIGHT_MTB  = 0.40
 WEIGHT_SSIM = 0.0
-WEIGHT_CLIP = 0.0
-WEIGHT_PDQ  = 0.45
+WEIGHT_CLIP = 0.25
+WEIGHT_PDQ  = 0.35
 COMPOSITE_DUP_THRESHOLD = 0.35    # 0–1 scale
 
 
@@ -89,10 +89,10 @@ AERIAL_MTB_HARD_FLOOR = 62.0     # never drop if below this MTB %
 AERIAL_PDQ_HD_CEIL    = 130      # HD ≥ this ⇒ totally different
 
 # weighted-score config for AERIAL photos (weights must sum to 1.0)
-AERIAL_WEIGHT_MTB  = 0.55
+AERIAL_WEIGHT_MTB  = 0.40
 AERIAL_WEIGHT_SSIM = 0.0
-AERIAL_WEIGHT_CLIP = 0.0
-AERIAL_WEIGHT_PDQ  = 0.45
+AERIAL_WEIGHT_CLIP = 0.25
+AERIAL_WEIGHT_PDQ  = 0.35
 AERIAL_COMPOSITE_DUP_THRESHOLD = 0.32    # 0–1 scale
 
 MAX_WORKERS = 16
@@ -207,7 +207,7 @@ def _safe_clip_embed(path: str) -> Optional[np.ndarray]:
         if _clip_model is None:
             _clip_device = "cuda" if torch.cuda.is_available() else "cpu"
             _clip_model, _clip_pre, _ = open_clip.create_model_and_transforms(
-                "ViT-B-32", device=_clip_device)
+                "ViT-B-32", pretrained="openai", device=_clip_device)
             _clip_model.eval()
         img = Image.open(path).convert("RGB")
         t = _clip_pre(img).unsqueeze(0).to(_clip_device)
@@ -394,7 +394,11 @@ def remove_near_duplicates(
 
 if __name__ == "__main__":
     groups = [
-        
+        [r"photos-706-winchester-blvd--los-gatos--ca-9\008_Nancy Peppin - IMG_0009.jpg"],
+        [r"photos-706-winchester-blvd--los-gatos--ca-9\009_Nancy Peppin - IMG_0003.jpg"],
+        [r"photos-75-knollview-way--san-francisco--ca\050_Scott Wall - DSC_0098.jpg"],
+        [r"photos-75-knollview-way--san-francisco--ca\053_Scott Wall - DSC_0143.jpg"],
     ]
     logger.info(f"Number of groups before deduplication: {len(groups)}")
-    filtered = remove_near_duplicates(groups, deduplication_flag=1, full_scan=False)
+    filtered = remove_near_duplicates(groups, deduplication_flag=1, full_scan=True)
+    logger.info(f"Number of groups after deduplication: {len(filtered)}")
