@@ -1,0 +1,400 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+dedupe_mtb_multi.py  – 17 Jul 2025  (weighted-score edition + full logging)
+Near-duplicate remover that now uses
+
+    • MTB   (Median-Threshold Bitmaps)
+    • SSIM  (thumbnail structural similarity)
+    • CLIP  (optional cosine similarity)
+    • PDQ   (optional Hamming distance)
+
+All metrics feed a **weighted composite score** so "almost-high-enough"
+combinations can still count as duplicates.  
+⚠️ Logging restored to original verbosity (pair details, Δ-stats,
+'Triggered by', etc.).
+
+------------------------------------------------------------
+Dependencies
+------------------------------------------------------------
+    pip install opencv-python-headless numpy pillow
+    pip install scikit-image           # <-- for SSIM
+    pip install pdqhash-lite           # <-- optional PDQ
+    pip install open_clip_torch torch  # <-- only if you enable CLIP
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Tuple, Dict, Any, Optional
+
+import cv2
+import numpy as np
+
+# ─── optional deps ────────────────────────────────────────────────────────────
+try:
+    import pdqhash
+except ImportError:           # PDQ is optional
+    pdqhash = None
+
+try:
+    from skimage.metrics import structural_similarity as _ssim
+except ImportError:
+    _ssim = None              # SSIM gate disabled if missing
+
+try:
+    from PIL import Image
+    _pil_available = True
+except ImportError:
+    _pil_available = False
+
+USE_CLIP = False              # flip to True if you have open_clip-torch installed
+if USE_CLIP:
+    try:
+        import torch, open_clip
+        _clip_model = _clip_pre = _clip_device = None
+    except ImportError:
+        USE_CLIP = False
+
+# ─── logging ──────────────────────────────────────────────────────────────────
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
+
+# ─── tuning knobs ─────────────────────────────────────────────────────────────
+MTB_SIZE, EDGE_SIZE, SSIM_SIZE = 640, 640, 320
+BLUR_SIZE, CANNY1, CANNY2 = 5, 50, 150
+USE_AUTO_CANNY, SIGMA, USE_CLAHE = True, 0.33, True
+
+# safety guardrails
+MTB_HARD_FLOOR = 67.0     # never drop if below this MTB %
+PDQ_HD_CEIL    = 115      # HD ≥ this ⇒ totally different
+
+
+
+# weighted-score config for REGULAR photos (weights must sum to 1.0)
+WEIGHT_MTB  = 0.55
+WEIGHT_SSIM = 0.0
+WEIGHT_CLIP = 0.0
+WEIGHT_PDQ  = 0.45
+COMPOSITE_DUP_THRESHOLD = 0.35    # 0–1 scale
+
+
+# safety guardrails for AERIAL photos
+AERIAL_MTB_HARD_FLOOR = 62.0     # never drop if below this MTB %
+AERIAL_PDQ_HD_CEIL    = 130      # HD ≥ this ⇒ totally different
+
+# weighted-score config for AERIAL photos (weights must sum to 1.0)
+AERIAL_WEIGHT_MTB  = 0.55
+AERIAL_WEIGHT_SSIM = 0.0
+AERIAL_WEIGHT_CLIP = 0.0
+AERIAL_WEIGHT_PDQ  = 0.45
+AERIAL_COMPOSITE_DUP_THRESHOLD = 0.32    # 0–1 scale
+
+MAX_WORKERS = 16
+
+# ─── helpers: I/O / resize / CLAHE / metadata ─────────────────────────────────
+@lru_cache(maxsize=512)
+def _load_gray(path: str) -> np.ndarray:
+    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise IOError(f"Failed to read {path}")
+    return img
+
+def _resize_keep_aspect(img: np.ndarray, target: int) -> np.ndarray:
+    h, w = img.shape[:2]
+    if max(h, w) <= target:
+        return img
+    scale = target / max(h, w)
+    new_w, new_h = int(w*scale), int(h*scale)
+    return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+def _resize_to_exact_size(img: np.ndarray, target_size: int) -> np.ndarray:
+    """Resize image to exact target size by cropping to square, no padding"""
+    h, w = img.shape[:2]
+    if h == target_size and w == target_size:
+        return img
+    
+    # Calculate scale to fit the longer dimension to target_size
+    scale = target_size / max(h, w)
+    new_h, new_w = int(h * scale), int(w * scale)
+    
+    # Resize image
+    resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    
+    # If not square, crop to center square
+    if new_h != new_w:
+        min_dim = min(new_h, new_w)
+        start_h = (new_h - min_dim) // 2
+        start_w = (new_w - min_dim) // 2
+        resized = resized[start_h:start_h+min_dim, start_w:start_w+min_dim]
+    
+    # Final resize to exact target size if needed
+    if resized.shape[0] != target_size or resized.shape[1] != target_size:
+        resized = cv2.resize(resized, (target_size, target_size), interpolation=cv2.INTER_AREA)
+    
+    return resized
+
+def _apply_clahe(img: np.ndarray) -> np.ndarray:
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    return clahe.apply(img)
+
+# ─── metadata extraction ──────────────────────────────────────────────────────
+def _is_aerial(path: str, metadata_dict: Dict[str, Dict[str, Any]]) -> bool:
+    """Check if photo is aerial (drone/aircraft) based on filename and metadata"""
+    filename = os.path.basename(path).upper()
+    make = metadata_dict.get(path, {}).get('make', '')
+    model = metadata_dict.get(path, {}).get('model', '')
+    if 'DJI' in filename or (make and ('DJI' in make.upper() or ('HASSELBLAD' in make.upper() and model and 'X1D' not in model.upper()) or 'AUTEL ROBOTICS' in make.upper())):
+        return True
+    return False
+
+# ─── bitmap / edge / SSIM ─────────────────────────────────────────────────────
+def _compute_mtb(gray: np.ndarray) -> np.ndarray:
+    return gray > np.median(gray)
+
+def _compute_edges(gray: np.ndarray) -> np.ndarray:
+    if BLUR_SIZE > 0:
+        gray = cv2.medianBlur(gray, BLUR_SIZE)
+    c1, c2 = CANNY1, CANNY2
+    if USE_AUTO_CANNY:
+        v = np.median(gray)
+        c1 = int(max(0, (1.0 - SIGMA) * v))
+        c2 = int(min(255, (1.0 + SIGMA) * v))
+    return (cv2.Canny(gray, c1, c2) > 0)
+
+def overlap_percent(a: np.ndarray, b: np.ndarray) -> float:
+    if a.sum() == 0 or b.sum() == 0:
+        return 0.0
+    return 100.0 * np.logical_and(a, b).sum() / min(a.sum(), b.sum())
+
+def _compute_ssim(gA: np.ndarray, gB: np.ndarray) -> float:
+    """Return SSIM in 0–100 (%). 0 if skimage unavailable."""
+    if _ssim is None:
+        return 0.0
+    H, W = max(gA.shape[0], gB.shape[0]), max(gA.shape[1], gB.shape[1])
+    padA = np.pad(gA, ((0, H-gA.shape[0]), (0, W-gA.shape[1])), constant_values=0)
+    padB = np.pad(gB, ((0, H-gB.shape[0]), (0, W-gB.shape[1])), constant_values=0)
+    return 100.0 * float(_ssim(padA, padB, data_range=255))
+
+# ─── PDQ helpers ──────────────────────────────────────────────────────────────
+def _pdq_bits(path: str) -> Optional[np.ndarray]:
+    if pdqhash is None:
+        return None
+    try:
+        from PIL import Image
+        bits, _ = pdqhash.compute(np.asarray(Image.open(path).convert("RGB")))
+        return np.array(bits, np.uint8)
+    except Exception:
+        return None
+
+def _pdq_hd(a: np.ndarray, b: np.ndarray) -> int:
+    if a is None or b is None or a.shape != b.shape:
+        return 999
+    return int(np.count_nonzero(a ^ b))
+
+# ─── CLIP helpers ─────────────────────────────────────────────────────────────
+def _safe_clip_embed(path: str) -> Optional[np.ndarray]:
+    if not USE_CLIP:
+        return None
+    global _clip_model, _clip_pre, _clip_device
+    try:
+        import PIL.Image as Image
+        if _clip_model is None:
+            _clip_device = "cuda" if torch.cuda.is_available() else "cpu"
+            _clip_model, _clip_pre, _ = open_clip.create_model_and_transforms(
+                "ViT-B-32", device=_clip_device)
+            _clip_model.eval()
+        img = Image.open(path).convert("RGB")
+        t = _clip_pre(img).unsqueeze(0).to(_clip_device)
+        with torch.no_grad():
+            emb = _clip_model.encode_image(t).cpu().squeeze()
+        return (emb / (emb.norm() + 1e-8)).numpy()
+    except Exception:
+        return None
+
+def _cosine(a: np.ndarray, b: np.ndarray) -> float:
+    if a is None or b is None:
+        return 0.0
+    return float(np.dot(a, b))
+
+# ─── metric worker & cache ────────────────────────────────────────────────────
+def _metric_worker(path: str) -> Dict[str, Any]:
+    gray = _load_gray(path)
+    if USE_CLAHE:
+        gray = _apply_clahe(gray)
+
+    return dict(
+        path=path,
+        filename=Path(path).name,
+        mtb=_compute_mtb(_resize_to_exact_size(gray, MTB_SIZE)),
+        edges=_compute_edges(_resize_to_exact_size(gray, EDGE_SIZE)),
+        gray_ssim=_resize_keep_aspect(gray, SSIM_SIZE),
+        pdq=_pdq_bits(path),
+        clip=_safe_clip_embed(path)
+    )
+
+_metric_store: Dict[str, Dict[str, Any]] = {}
+
+@lru_cache(maxsize=4096)
+def _pair_sim(path_a: str, path_b: str) -> Tuple[float, float, int, float, float]:
+    """Return (mtb %, edge %, PDQ-HD, SSIM %, CLIP %)"""
+    mA, mB = _metric_store[path_a], _metric_store[path_b]
+
+    # Shapes should now be consistent due to _resize_to_exact_size
+    # But keep the safety check just in case
+    if mA["mtb"].shape != mB["mtb"].shape:
+        logger.warning("MTB shape mismatch: %s vs %s - this shouldn't happen anymore",
+                       mA["mtb"].shape, mB["mtb"].shape)
+        return 0.0, 0.0, 999, 0.0, 0.0
+    if mA["edges"].shape != mB["edges"].shape:
+        logger.warning("Edge shape mismatch: %s vs %s - this shouldn't happen anymore",
+                       mA["edges"].shape, mB["edges"].shape)
+        return 0.0, 0.0, 999, 0.0, 0.0
+
+    mtb  = overlap_percent(mA["mtb"],   mB["mtb"])
+    edge = overlap_percent(mA["edges"], mB["edges"])
+    hd   = _pdq_hd(mA["pdq"],           mB["pdq"])
+    ssim = _compute_ssim(mA["gray_ssim"], mB["gray_ssim"])
+    clip = 100.0 * _cosine(mA["clip"],     mB["clip"])
+    return mtb, edge, hd, ssim, clip
+
+# ─── main deduper ─────────────────────────────────────────────────────────────
+def remove_near_duplicates(
+    groups: List[List[str]],
+    deduplication_flag: int = 0,
+    metadata_dict: Dict[str, Dict[str, Any]] = None,
+    threshold: float = 0.0,          # kept for API compat (unused)
+    full_scan: bool = False
+) -> List[List[str]]:
+    if deduplication_flag != 1 or len(groups) < 2:
+        return groups
+
+    mids = [g[len(g)//2] for g in groups]
+    logger.info("[STEP] Pre-computing metrics for %d middles…", len(mids))
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        for fut in as_completed(pool.submit(_metric_worker, p) for p in mids):
+            m = fut.result()
+            _metric_store[m["path"]] = m
+
+    # Use the passed-in metadata_dict instead of extracting new metadata
+    if metadata_dict is None:
+        logger.warning("No metadata_dict provided, using empty dict for aerial detection")
+        metadata_dict = {}
+
+    logger.info("[STEP] Multi-metric dedup (weighted score, full_scan=%s)", full_scan)
+    keep = [True] * len(groups)
+    stats = {"mtb": [], "edge": [], "hd": [], "ssim": [], "clip": [], "score": []}
+
+    def _log_pair(i: int, j: int, mtb: float, edge: float, hd: int,
+                  ssim: float, clip: float, score: float, is_aerial_pair: bool):
+        weight_type = "AERIAL" if is_aerial_pair else "REGULAR"
+        logger.info(
+            "  • %s ↔ %s : MTB=%.1f  Edge=%.1f  SSIM=%.1f  CLIP=%.1f  PDQ=%d  SCORE=%.2f [%s]",
+            Path(mids[i]).stem, Path(mids[j]).stem,
+            mtb, edge, ssim, clip, hd, score, weight_type
+        )
+        logger.info("     Comparing: %s", mids[i])
+        logger.info("     With:      %s", mids[j])
+
+    def _drop(idx: int, mtb: float, edge: float, hd: int,
+              ssim: float, clip: float, score: float,
+              trigger_metrics: List[str], is_aerial_img: bool):
+        mean = {k: (np.mean(v) if v else 0.0) for k, v in stats.items()}
+
+        # attempt to pull UUID from any 36-char segment in path
+        uuid = next((p for p in Path(mids[idx]).parts
+                     if len(p) == 36 and p.count('-') == 4), "unknown")
+
+        weight_type = "AERIAL" if is_aerial_img else "REGULAR"
+        logger.info(
+            "       → DROPPING stack %s (UUID: %s) [%s]   ΔMTB=%.1f  ΔEdge=%.1f  ΔSSIM=%.1f  "
+            "ΔCLIP=%.1f  ΔPDQ_HD=%+.0f  ΔSCORE=%.2f  "
+            "(means MTB=%.1f Edge=%.1f SSIM=%.1f CLIP=%.1f PDQ_HD=%.0f SCORE=%.2f)",
+            Path(mids[idx]).stem, uuid, weight_type,
+            mtb - mean["mtb"], edge - mean["edge"],
+            ssim - mean["ssim"], clip - mean["clip"], hd - mean["hd"],
+            score - mean["score"],
+            mean["mtb"], mean["edge"], mean["ssim"], mean["clip"],
+            mean["hd"], mean["score"]
+        )
+        logger.info("       → Triggered by: %s", ", ".join(trigger_metrics))
+        logger.info("       → Dropped image: %s", mids[idx])
+        keep[idx] = False
+
+    # comparison schedule
+    idx_pairs = ([(i, j) for i in range(len(groups)-1)
+                           for j in range(i+1, len(groups))]
+                 if full_scan else [(i, i+1) for i in range(len(groups)-1)])
+
+    for i, j in idx_pairs:
+        if not keep[i] or not keep[j]:
+            continue
+
+        mtb, edge, hd, ssim, clip = _pair_sim(mids[i], mids[j])
+        if hd == 999:
+            continue  # unusable comparison
+
+        # Check if either image is aerial to determine which weights to use
+        is_aerial_i = _is_aerial(mids[i], metadata_dict)
+        is_aerial_j = _is_aerial(mids[j], metadata_dict)
+        is_aerial_pair = is_aerial_i or is_aerial_j  # Use aerial weights if either is aerial
+
+        # Select appropriate weights and threshold
+        if is_aerial_pair:
+            w_mtb, w_ssim, w_clip, w_pdq = AERIAL_WEIGHT_MTB, AERIAL_WEIGHT_SSIM, AERIAL_WEIGHT_CLIP, AERIAL_WEIGHT_PDQ
+            dup_threshold = AERIAL_COMPOSITE_DUP_THRESHOLD
+            mtb_floor = AERIAL_MTB_HARD_FLOOR
+            pdq_ceil = AERIAL_PDQ_HD_CEIL
+        else:
+            w_mtb, w_ssim, w_clip, w_pdq = WEIGHT_MTB, WEIGHT_SSIM, WEIGHT_CLIP, WEIGHT_PDQ
+            dup_threshold = COMPOSITE_DUP_THRESHOLD
+            mtb_floor = MTB_HARD_FLOOR
+            pdq_ceil = PDQ_HD_CEIL
+
+        # composite score with selected weights
+        score = (
+            w_mtb  * (mtb  / 100.0) +
+            w_ssim * (ssim / 100.0) +
+            w_clip * (clip / 100.0) +
+            w_pdq  * (0.0 if hd >= pdq_ceil else 1.0 - hd / pdq_ceil)
+        )
+
+        # stats + logging
+        for k, v in zip(("mtb", "edge", "hd", "ssim", "clip", "score"),
+                        (mtb, edge, hd, ssim, clip, score)):
+            stats[k].append(v)
+        _log_pair(i, j, mtb, edge, hd, ssim, clip, score, is_aerial_pair)
+
+        # decision logic
+        trigger_metrics = []
+        if score >= dup_threshold:
+            trigger_metrics.append(f"SCORE({score:.2f}≥{dup_threshold})")
+        if mtb < mtb_floor:
+            trigger_metrics.append(f"MTB_FLOOR_FAIL({mtb:.1f}<{mtb_floor})")
+            continue
+        if hd >= pdq_ceil:
+            trigger_metrics.append(f"PDQ_HD({hd:.0f}≥{pdq_ceil})")
+            continue
+
+        dup = (score >= dup_threshold) and (mtb >= mtb_floor) and (hd < pdq_ceil)
+
+        if dup:
+            _drop(i, mtb, edge, hd, ssim, clip, score, trigger_metrics, is_aerial_i)
+
+    final_groups = [g for g, k in zip(groups, keep) if k]
+    logger.info("[RESULT] stacks: %d → %d", len(groups), len(final_groups))
+    return final_groups
+
+
+
+if __name__ == "__main__":
+    groups = [
+        
+    ]
+    logger.info(f"Number of groups before deduplication: {len(groups)}")
+    filtered = remove_near_duplicates(groups, deduplication_flag=1, full_scan=False)
