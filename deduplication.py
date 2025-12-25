@@ -207,7 +207,7 @@ def _safe_clip_embed(path: str) -> Optional[np.ndarray]:
         if _clip_model is None:
             _clip_device = "cuda" if torch.cuda.is_available() else "cpu"
             _clip_model, _clip_pre, _ = open_clip.create_model_and_transforms(
-                "ViT-B-32", device=_clip_device)
+                "ViT-B-32", pretrained="openai", device=_clip_device)
             _clip_model.eval()
         img = Image.open(path).convert("RGB")
         t = _clip_pre(img).unsqueeze(0).to(_clip_device)
