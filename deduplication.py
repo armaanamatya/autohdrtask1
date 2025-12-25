@@ -172,11 +172,11 @@ PDQ_HD_CEIL    = 115      # HD ≥ this ⇒ totally different
 
 
 # weighted-score config for REGULAR photos (weights must sum to 1.0)
-WEIGHT_MTB  = 0.40
+WEIGHT_MTB  = 0.35
 WEIGHT_SSIM = 0.0
-WEIGHT_CLIP = 0.25
+WEIGHT_CLIP = 0.30
 WEIGHT_PDQ  = 0.35
-COMPOSITE_DUP_THRESHOLD = 0.35    # 0–1 scale
+COMPOSITE_DUP_THRESHOLD = 0.40    # 0–1 scale
 
 
 # safety guardrails for AERIAL photos
@@ -184,11 +184,11 @@ AERIAL_MTB_HARD_FLOOR = 62.0     # never drop if below this MTB %
 AERIAL_PDQ_HD_CEIL    = 130      # HD ≥ this ⇒ totally different
 
 # weighted-score config for AERIAL photos (weights must sum to 1.0)
-AERIAL_WEIGHT_MTB  = 0.40
+AERIAL_WEIGHT_MTB  = 0.35
 AERIAL_WEIGHT_SSIM = 0.0
-AERIAL_WEIGHT_CLIP = 0.25
+AERIAL_WEIGHT_CLIP = 0.30
 AERIAL_WEIGHT_PDQ  = 0.35
-AERIAL_COMPOSITE_DUP_THRESHOLD = 0.32    # 0–1 scale
+AERIAL_COMPOSITE_DUP_THRESHOLD = 0.40    # 0–1 scale
 
 MAX_WORKERS = 16
 
