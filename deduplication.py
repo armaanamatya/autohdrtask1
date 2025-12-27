@@ -530,7 +530,7 @@ def remove_near_duplicates(
         if score >= dup_threshold:
             trigger_metrics.append(f"SCORE({score:.2f}≥{dup_threshold})")
         
-        # SIFT override: If SIFT matches are high and CLIP is high, allow override of MTB floor
+        # SIFT override: If SIFT matches are high and CLIP is high, allow override of MTB floor AND PDQ ceiling
         sift_override = (sift_matches >= sift_min) and (clip >= 85.0)
         
         if mtb < mtb_floor and not sift_override:
@@ -543,7 +543,7 @@ def remove_near_duplicates(
                     dropped=False, drop_reason=drop_reason
                 )
             continue
-        if hd >= pdq_ceil:
+        if hd >= pdq_ceil and not sift_override:
             trigger_metrics.append(f"PDQ_HD({hd:.0f}≥{pdq_ceil})")
             drop_reason = f"PDQ >= {pdq_ceil}"
             # Log comparison even if not dropped
@@ -554,8 +554,8 @@ def remove_near_duplicates(
                 )
             continue
 
-        # Allow duplicate if: (score high AND (MTB floor passed OR SIFT override)) AND PDQ ceiling passed
-        dup = (score >= dup_threshold) and ((mtb >= mtb_floor) or sift_override) and (hd < pdq_ceil)
+        # Allow duplicate if: (score high AND (MTB floor passed OR SIFT override)) AND (PDQ ceiling passed OR SIFT override)
+        dup = (score >= dup_threshold) and ((mtb >= mtb_floor) or sift_override) and ((hd < pdq_ceil) or sift_override)
         
         if sift_override:
             trigger_metrics.append(f"SIFT_OVERRIDE({sift_matches}≥{sift_min}, CLIP={clip:.1f}≥85.0)")
