@@ -92,8 +92,8 @@ class ExperimentLogger:
         return self.log_capture.getvalue()
     
     def add_comparison(self, img_a: str, img_b: str, mtb: float, edge: float,
-                       ssim: float, clip: float, pdq_hd: int, score: float,
-                       dropped: bool, drop_reason: str) -> None:
+                       ssim: float, clip: float, pdq_hd: int, sift_matches: int,
+                       score: float, dropped: bool, drop_reason: str) -> None:
         self.comparison_results.append({
             "img_a": Path(img_a).stem,
             "img_b": Path(img_b).stem,
@@ -102,6 +102,7 @@ class ExperimentLogger:
             "ssim": ssim,
             "clip": clip,
             "pdq_hd": pdq_hd,
+            "sift_matches": sift_matches,
             "score": score,
             "dropped": dropped,
             "drop_reason": drop_reason
@@ -124,20 +125,22 @@ class ExperimentLogger:
 | WEIGHT_SSIM | {WEIGHT_SSIM} |
 | WEIGHT_CLIP | {WEIGHT_CLIP} |
 | WEIGHT_PDQ | {WEIGHT_PDQ} |
+| WEIGHT_SIFT | {WEIGHT_SIFT} |
 | COMPOSITE_DUP_THRESHOLD | {COMPOSITE_DUP_THRESHOLD} |
 | MTB_HARD_FLOOR | {MTB_HARD_FLOOR} |
 | PDQ_HD_CEIL | {PDQ_HD_CEIL} |
+| SIFT_MIN_MATCHES | {SIFT_MIN_MATCHES} |
 
 ## Results
 
-| Image A | Image B | MTB % | Edge % | SSIM % | CLIP % | PDQ HD | SCORE | Dropped? |
-|---------|---------|-------|--------|--------|--------|--------|-------|----------|
+| Image A | Image B | MTB % | Edge % | SSIM % | CLIP % | PDQ HD | SIFT | SCORE | Dropped? |
+|---------|---------|-------|--------|--------|--------|--------|------|-------|----------|
 """
         for r in self.comparison_results:
             dropped_str = f"Yes ({r['drop_reason']})" if r["dropped"] else "No"
             if not r["dropped"] and r["drop_reason"]:
                 dropped_str = f"No ({r['drop_reason']})"
-            entry += f"| {r['img_a']} | {r['img_b']} | {r['mtb']:.1f} | {r['edge']:.1f} | {r['ssim']:.1f} | {r['clip']:.1f} | {r['pdq_hd']} | {r['score']:.2f} | {dropped_str} |\n"
+            entry += f"| {r['img_a']} | {r['img_b']} | {r['mtb']:.1f} | {r['edge']:.1f} | {r['ssim']:.1f} | {r['clip']:.1f} | {r['pdq_hd']} | {r['sift_matches']} | {r['score']:.2f} | {dropped_str} |\n"
         
         entry += f"""
 ## Summary
@@ -172,11 +175,13 @@ PDQ_HD_CEIL    = 115      # HD ≥ this ⇒ totally different
 
 
 # weighted-score config for REGULAR photos (weights must sum to 1.0)
-WEIGHT_MTB  = 0.35
+WEIGHT_MTB  = 0.30
 WEIGHT_SSIM = 0.0
 WEIGHT_CLIP = 0.30
-WEIGHT_PDQ  = 0.35
-COMPOSITE_DUP_THRESHOLD = 0.35    # 0–1 scale
+WEIGHT_PDQ  = 0.30
+WEIGHT_SIFT = 0.10
+COMPOSITE_DUP_THRESHOLD = 0.4    # 0–1 scale
+SIFT_MIN_MATCHES = 50            # Minimum SIFT matches to consider as duplicate
 
 
 # safety guardrails for AERIAL photos
@@ -184,11 +189,13 @@ AERIAL_MTB_HARD_FLOOR = 62.0     # never drop if below this MTB %
 AERIAL_PDQ_HD_CEIL    = 130      # HD ≥ this ⇒ totally different
 
 # weighted-score config for AERIAL photos (weights must sum to 1.0)
-AERIAL_WEIGHT_MTB  = 0.35
+AERIAL_WEIGHT_MTB  = 0.30
 AERIAL_WEIGHT_SSIM = 0.0
 AERIAL_WEIGHT_CLIP = 0.30
-AERIAL_WEIGHT_PDQ  = 0.35
+AERIAL_WEIGHT_PDQ  = 0.30
+AERIAL_WEIGHT_SIFT = 0.10
 AERIAL_COMPOSITE_DUP_THRESHOLD = 0.32    # 0–1 scale
+AERIAL_SIFT_MIN_MATCHES = 50              # Minimum SIFT matches for aerial photos
 
 MAX_WORKERS = 16
 
@@ -317,6 +324,51 @@ def _cosine(a: np.ndarray, b: np.ndarray) -> float:
         return 0.0
     return float(np.dot(a, b))
 
+# ─── SIFT helpers ─────────────────────────────────────────────────────────────
+def _compute_sift_matches(path_a: str, path_b: str, min_matches: int = 50) -> int:
+    """
+    Compute SIFT feature matches between two images.
+    Returns the number of good matches after Lowe's ratio test.
+    """
+    try:
+        img1 = cv2.imread(path_a, cv2.IMREAD_GRAYSCALE)
+        img2 = cv2.imread(path_b, cv2.IMREAD_GRAYSCALE)
+        
+        if img1 is None or img2 is None:
+            return 0
+        
+        # Create SIFT detector
+        sift = cv2.SIFT_create()
+        
+        # Detect keypoints and descriptors
+        kp1, des1 = sift.detectAndCompute(img1, None)
+        kp2, des2 = sift.detectAndCompute(img2, None)
+        
+        if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
+            return 0
+        
+        # FLANN-based matcher
+        FLANN_INDEX_KDTREE = 1
+        index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
+        search_params = dict(checks=50)
+        flann = cv2.FlannBasedMatcher(index_params, search_params)
+        
+        # Match descriptors
+        matches = flann.knnMatch(des1, des2, k=2)
+        
+        # Apply Lowe's ratio test
+        good_matches = []
+        for match_pair in matches:
+            if len(match_pair) == 2:
+                m, n = match_pair
+                if m.distance < 0.7 * n.distance:
+                    good_matches.append(m)
+        
+        return len(good_matches)
+    except Exception as e:
+        logger.debug(f"SIFT computation failed for {path_a} vs {path_b}: {e}")
+        return 0
+
 # ─── metric worker & cache ────────────────────────────────────────────────────
 def _metric_worker(path: str) -> Dict[str, Any]:
     gray = _load_gray(path)
@@ -336,8 +388,8 @@ def _metric_worker(path: str) -> Dict[str, Any]:
 _metric_store: Dict[str, Dict[str, Any]] = {}
 
 @lru_cache(maxsize=4096)
-def _pair_sim(path_a: str, path_b: str) -> Tuple[float, float, int, float, float]:
-    """Return (mtb %, edge %, PDQ-HD, SSIM %, CLIP %)"""
+def _pair_sim(path_a: str, path_b: str) -> Tuple[float, float, int, float, float, int]:
+    """Return (mtb %, edge %, PDQ-HD, SSIM %, CLIP %, SIFT matches)"""
     mA, mB = _metric_store[path_a], _metric_store[path_b]
 
     # Shapes should now be consistent due to _resize_to_exact_size
@@ -345,18 +397,19 @@ def _pair_sim(path_a: str, path_b: str) -> Tuple[float, float, int, float, float
     if mA["mtb"].shape != mB["mtb"].shape:
         logger.warning("MTB shape mismatch: %s vs %s - this shouldn't happen anymore",
                        mA["mtb"].shape, mB["mtb"].shape)
-        return 0.0, 0.0, 999, 0.0, 0.0
+        return 0.0, 0.0, 999, 0.0, 0.0, 0
     if mA["edges"].shape != mB["edges"].shape:
         logger.warning("Edge shape mismatch: %s vs %s - this shouldn't happen anymore",
                        mA["edges"].shape, mB["edges"].shape)
-        return 0.0, 0.0, 999, 0.0, 0.0
+        return 0.0, 0.0, 999, 0.0, 0.0, 0
 
     mtb  = overlap_percent(mA["mtb"],   mB["mtb"])
     edge = overlap_percent(mA["edges"], mB["edges"])
     hd   = _pdq_hd(mA["pdq"],           mB["pdq"])
     ssim = _compute_ssim(mA["gray_ssim"], mB["gray_ssim"])
     clip = 100.0 * _cosine(mA["clip"],     mB["clip"])
-    return mtb, edge, hd, ssim, clip
+    sift_matches = _compute_sift_matches(path_a, path_b, SIFT_MIN_MATCHES)
+    return mtb, edge, hd, ssim, clip, sift_matches
 
 # ─── main deduper ─────────────────────────────────────────────────────────────
 def remove_near_duplicates(
@@ -383,15 +436,15 @@ def remove_near_duplicates(
 
     logger.info("[STEP] Multi-metric dedup (weighted score, full_scan=%s)", full_scan)
     keep = [True] * len(groups)
-    stats = {"mtb": [], "edge": [], "hd": [], "ssim": [], "clip": [], "score": []}
+    stats = {"mtb": [], "edge": [], "hd": [], "ssim": [], "clip": [], "sift": [], "score": []}
 
     def _log_pair(i: int, j: int, mtb: float, edge: float, hd: int,
-                  ssim: float, clip: float, score: float, is_aerial_pair: bool):
+                  ssim: float, clip: float, sift_matches: int, score: float, is_aerial_pair: bool):
         weight_type = "AERIAL" if is_aerial_pair else "REGULAR"
         logger.info(
-            "  • %s ↔ %s : MTB=%.1f  Edge=%.1f  SSIM=%.1f  CLIP=%.1f  PDQ=%d  SCORE=%.2f [%s]",
+            "  • %s ↔ %s : MTB=%.1f  Edge=%.1f  SSIM=%.1f  CLIP=%.1f  PDQ=%d  SIFT=%d  SCORE=%.2f [%s]",
             Path(mids[i]).stem, Path(mids[j]).stem,
-            mtb, edge, ssim, clip, hd, score, weight_type
+            mtb, edge, ssim, clip, hd, sift_matches, score, weight_type
         )
         logger.info("     Comparing: %s", mids[i])
         logger.info("     With:      %s", mids[j])
@@ -430,7 +483,7 @@ def remove_near_duplicates(
         if not keep[i] or not keep[j]:
             continue
 
-        mtb, edge, hd, ssim, clip = _pair_sim(mids[i], mids[j])
+        mtb, edge, hd, ssim, clip, sift_matches = _pair_sim(mids[i], mids[j])
         if hd == 999:
             continue  # unusable comparison
 
@@ -441,42 +494,52 @@ def remove_near_duplicates(
 
         # Select appropriate weights and threshold
         if is_aerial_pair:
-            w_mtb, w_ssim, w_clip, w_pdq = AERIAL_WEIGHT_MTB, AERIAL_WEIGHT_SSIM, AERIAL_WEIGHT_CLIP, AERIAL_WEIGHT_PDQ
+            w_mtb, w_ssim, w_clip, w_pdq, w_sift = AERIAL_WEIGHT_MTB, AERIAL_WEIGHT_SSIM, AERIAL_WEIGHT_CLIP, AERIAL_WEIGHT_PDQ, AERIAL_WEIGHT_SIFT
             dup_threshold = AERIAL_COMPOSITE_DUP_THRESHOLD
             mtb_floor = AERIAL_MTB_HARD_FLOOR
             pdq_ceil = AERIAL_PDQ_HD_CEIL
+            sift_min = AERIAL_SIFT_MIN_MATCHES
         else:
-            w_mtb, w_ssim, w_clip, w_pdq = WEIGHT_MTB, WEIGHT_SSIM, WEIGHT_CLIP, WEIGHT_PDQ
+            w_mtb, w_ssim, w_clip, w_pdq, w_sift = WEIGHT_MTB, WEIGHT_SSIM, WEIGHT_CLIP, WEIGHT_PDQ, WEIGHT_SIFT
             dup_threshold = COMPOSITE_DUP_THRESHOLD
             mtb_floor = MTB_HARD_FLOOR
             pdq_ceil = PDQ_HD_CEIL
+            sift_min = SIFT_MIN_MATCHES
+
+        # Normalize SIFT matches to 0-1 scale (cap at 100 matches = 1.0)
+        sift_score = min(sift_matches / 100.0, 1.0) if sift_matches > 0 else 0.0
 
         # composite score with selected weights
         score = (
             w_mtb  * (mtb  / 100.0) +
             w_ssim * (ssim / 100.0) +
             w_clip * (clip / 100.0) +
-            w_pdq  * (0.0 if hd >= pdq_ceil else 1.0 - hd / pdq_ceil)
+            w_pdq  * (0.0 if hd >= pdq_ceil else 1.0 - hd / pdq_ceil) +
+            w_sift * sift_score
         )
 
         # stats + logging
-        for k, v in zip(("mtb", "edge", "hd", "ssim", "clip", "score"),
-                        (mtb, edge, hd, ssim, clip, score)):
+        for k, v in zip(("mtb", "edge", "hd", "ssim", "clip", "sift", "score"),
+                        (mtb, edge, hd, ssim, clip, sift_matches, score)):
             stats[k].append(v)
-        _log_pair(i, j, mtb, edge, hd, ssim, clip, score, is_aerial_pair)
+        _log_pair(i, j, mtb, edge, hd, ssim, clip, sift_matches, score, is_aerial_pair)
 
         # decision logic
         trigger_metrics = []
         drop_reason = ""
         if score >= dup_threshold:
             trigger_metrics.append(f"SCORE({score:.2f}≥{dup_threshold})")
-        if mtb < mtb_floor:
+        
+        # SIFT override: If SIFT matches are high and CLIP is high, allow override of MTB floor
+        sift_override = (sift_matches >= sift_min) and (clip >= 85.0)
+        
+        if mtb < mtb_floor and not sift_override:
             trigger_metrics.append(f"MTB_FLOOR_FAIL({mtb:.1f}<{mtb_floor})")
             drop_reason = f"MTB < {mtb_floor}"
             # Log comparison even if not dropped
             if _experiment_logger:
                 _experiment_logger.add_comparison(
-                    mids[i], mids[j], mtb, edge, ssim, clip, hd, score,
+                    mids[i], mids[j], mtb, edge, ssim, clip, hd, sift_matches, score,
                     dropped=False, drop_reason=drop_reason
                 )
             continue
@@ -486,24 +549,28 @@ def remove_near_duplicates(
             # Log comparison even if not dropped
             if _experiment_logger:
                 _experiment_logger.add_comparison(
-                    mids[i], mids[j], mtb, edge, ssim, clip, hd, score,
+                    mids[i], mids[j], mtb, edge, ssim, clip, hd, sift_matches, score,
                     dropped=False, drop_reason=drop_reason
                 )
             continue
 
-        dup = (score >= dup_threshold) and (mtb >= mtb_floor) and (hd < pdq_ceil)
+        # Allow duplicate if: (score high AND (MTB floor passed OR SIFT override)) AND PDQ ceiling passed
+        dup = (score >= dup_threshold) and ((mtb >= mtb_floor) or sift_override) and (hd < pdq_ceil)
+        
+        if sift_override:
+            trigger_metrics.append(f"SIFT_OVERRIDE({sift_matches}≥{sift_min}, CLIP={clip:.1f}≥85.0)")
 
         if dup:
             _drop(i, mtb, edge, hd, ssim, clip, score, trigger_metrics, is_aerial_i)
             if _experiment_logger:
                 _experiment_logger.add_comparison(
-                    mids[i], mids[j], mtb, edge, ssim, clip, hd, score,
+                    mids[i], mids[j], mtb, edge, ssim, clip, hd, sift_matches, score,
                     dropped=True, drop_reason="duplicate"
                 )
         else:
             if _experiment_logger:
                 _experiment_logger.add_comparison(
-                    mids[i], mids[j], mtb, edge, ssim, clip, hd, score,
+                    mids[i], mids[j], mtb, edge, ssim, clip, hd, sift_matches, score,
                     dropped=False, drop_reason=f"SCORE < {dup_threshold}" if score < dup_threshold else ""
                 )
 
@@ -523,12 +590,36 @@ if __name__ == "__main__":
                         help="File to log experiment results to")
     args = parser.parse_args()
     
-    groups = [
-        [r"photos-706-winchester-blvd--los-gatos--ca-9\008_Nancy Peppin - IMG_0009.jpg"],
-        [r"photos-706-winchester-blvd--los-gatos--ca-9\009_Nancy Peppin - IMG_0003.jpg"],
-        [r"photos-75-knollview-way--san-francisco--ca\050_Scott Wall - DSC_0098.jpg"],
-        [r"photos-75-knollview-way--san-francisco--ca\053_Scott Wall - DSC_0143.jpg"],
+    # Option 1: Load from a single folder (one group per image)
+    # folder = "combined"
+    # groups = [[str(img)] for img in Path(folder).glob("*.jpg")]
+    
+    # Option 2: Load from multiple folders
+    # With full_scan=False: Only compares ADJACENT images
+    # Images from same folder are grouped together, so they'll be compared
+    folders = [
+        "photos-706-winchester-blvd--los-gatos--ca-9",
+        "photos-75-knollview-way--san-francisco--ca"
     ]
+    groups = []
+    for folder in folders:
+        if Path(folder).exists():
+            # Sort images within each folder for consistent ordering
+            folder_images = sorted(Path(folder).glob("*.jpg"))
+            for img in folder_images:
+                groups.append([str(img)])
+    
+    # Option 3: Use combined folder if you want all images together
+    # groups = [[str(img)] for img in Path("combined").glob("*.jpg")]
+    
+    # Fallback: Hardcoded paths (for testing)
+    if not groups:
+        groups = [
+            [r"combined\008_Nancy Peppin - IMG_0009.jpg"],
+            [r"combined\009_Nancy Peppin - IMG_0003.jpg"],
+            [r"combined\050_Scott Wall - DSC_0098.jpg"],
+            [r"combined\053_Scott Wall - DSC_0143.jpg"],
+        ]
     
     # Setup experiment logging if requested
     if args.log_experiment:
@@ -537,7 +628,8 @@ if __name__ == "__main__":
         _experiment_logger.input_count = len(groups)
     
     logger.info(f"Number of groups before deduplication: {len(groups)}")
-    filtered = remove_near_duplicates(groups, deduplication_flag=1, full_scan=True)
+    logger.info(f"Using full_scan=False: Only comparing adjacent images (sequential pairs)")
+    filtered = remove_near_duplicates(groups, deduplication_flag=1, full_scan=False)
     logger.info(f"Number of groups after deduplication: {len(filtered)}")
     
     # Write experiment log if requested
