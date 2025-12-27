@@ -180,7 +180,7 @@ WEIGHT_SSIM = 0.0
 WEIGHT_CLIP = 0.30
 WEIGHT_PDQ  = 0.30
 WEIGHT_SIFT = 0.10
-COMPOSITE_DUP_THRESHOLD = 0.4    # 0–1 scale
+COMPOSITE_DUP_THRESHOLD = 0.35    # 0–1 scale
 SIFT_MIN_MATCHES = 50            # Minimum SIFT matches to consider as duplicate
 
 
