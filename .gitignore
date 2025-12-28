@@ -1,3 +1,28 @@
 plan.txt
 initialresearch.md
 venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+
+# Backup files
+*original.py
+
+# Experiment logs and notes
+constantsused.md
+training-data-approaches.md
+zero-shot-approaches.md
+stats.md
+compositescore.md
+
+# Generated/output directories
+combined/
+
+# Data files (if generated)
+groundtruth.txt
+q&a.md
