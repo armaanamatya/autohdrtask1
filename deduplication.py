@@ -176,9 +176,9 @@ PDQ_HD_CEIL    = 115      # HD ≥ this ⇒ totally different
 
 # weighted-score config for REGULAR photos (weights must sum to 1.0)
 WEIGHT_MTB  = 0.30
-WEIGHT_SSIM = 0.0
-WEIGHT_CLIP = 0.30
-WEIGHT_PDQ  = 0.30
+WEIGHT_SSIM = 0.10  # ENABLED - Testing with SSIM
+WEIGHT_CLIP = 0.25  # Reduced from 0.30 to make room for SSIM
+WEIGHT_PDQ  = 0.25  # Reduced from 0.30 to make room for SSIM
 WEIGHT_SIFT = 0.10
 COMPOSITE_DUP_THRESHOLD = 0.35    # 0–1 scale
 SIFT_MIN_MATCHES = 50            # Minimum SIFT matches to consider as duplicate
@@ -190,9 +190,9 @@ AERIAL_PDQ_HD_CEIL    = 130      # HD ≥ this ⇒ totally different
 
 # weighted-score config for AERIAL photos (weights must sum to 1.0)
 AERIAL_WEIGHT_MTB  = 0.30
-AERIAL_WEIGHT_SSIM = 0.0
-AERIAL_WEIGHT_CLIP = 0.30
-AERIAL_WEIGHT_PDQ  = 0.30
+AERIAL_WEIGHT_SSIM = 0.10  # ENABLED - Testing with SSIM
+AERIAL_WEIGHT_CLIP = 0.25  # Reduced from 0.30 to make room for SSIM
+AERIAL_WEIGHT_PDQ  = 0.25  # Reduced from 0.30 to make room for SSIM
 AERIAL_WEIGHT_SIFT = 0.10
 AERIAL_COMPOSITE_DUP_THRESHOLD = 0.32    # 0–1 scale
 AERIAL_SIFT_MIN_MATCHES = 50              # Minimum SIFT matches for aerial photos
@@ -531,7 +531,8 @@ def remove_near_duplicates(
             trigger_metrics.append(f"SCORE({score:.2f}≥{dup_threshold})")
         
         # SIFT override: If SIFT matches are high and CLIP is high, allow override of MTB floor AND PDQ ceiling
-        sift_override = (sift_matches >= sift_min) and (clip >= 85.0)
+        # sift_override = (sift_matches >= sift_min) and (clip >= 85.0)
+        sift_override = False  # DISABLED FOR TESTING - Testing without SIFT override
         
         if mtb < mtb_floor and not sift_override:
             trigger_metrics.append(f"MTB_FLOOR_FAIL({mtb:.1f}<{mtb_floor})")
