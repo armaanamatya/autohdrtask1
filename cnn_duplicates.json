@@ -1,0 +1,21 @@
+{
+  "statistics": {
+    "total_images": 4,
+    "images_with_duplicates": 2,
+    "total_duplicate_pairs": 2
+  },
+  "duplicates": {
+    "050_Scott Wall - DSC_0098.jpg": [
+      [
+        "053_Scott Wall - DSC_0143.jpg",
+        0.9116815328598022
+      ]
+    ],
+    "053_Scott Wall - DSC_0143.jpg": [
+      [
+        "050_Scott Wall - DSC_0098.jpg",
+        0.9116815328598022
+      ]
+    ]
+  }
+}

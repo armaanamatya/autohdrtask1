@@ -199,6 +199,72 @@ AERIAL_SIFT_MIN_MATCHES = 50              # Minimum SIFT matches for aerial phot
 
 MAX_WORKERS = 16
 
+# ─── weight configuration helper ──────────────────────────────────────────────
+def set_weights(mtb=None, ssim=None, clip=None, pdq=None, sift=None,
+                aerial_mtb=None, aerial_ssim=None, aerial_clip=None,
+                aerial_pdq=None, aerial_sift=None):
+    """
+    Set global weight variables for batch testing.
+
+    Args:
+        mtb, ssim, clip, pdq, sift: Weights for regular photos (0.0-1.0)
+        aerial_*: Weights for aerial photos (0.0-1.0)
+
+    Note: Weights should sum to 1.0. This function does NOT validate the sum.
+    """
+    global WEIGHT_MTB, WEIGHT_SSIM, WEIGHT_CLIP, WEIGHT_PDQ, WEIGHT_SIFT
+    global AERIAL_WEIGHT_MTB, AERIAL_WEIGHT_SSIM, AERIAL_WEIGHT_CLIP
+    global AERIAL_WEIGHT_PDQ, AERIAL_WEIGHT_SIFT
+
+    # Set regular photo weights
+    if mtb is not None:
+        WEIGHT_MTB = mtb
+    if ssim is not None:
+        WEIGHT_SSIM = ssim
+    if clip is not None:
+        WEIGHT_CLIP = clip
+    if pdq is not None:
+        WEIGHT_PDQ = pdq
+    if sift is not None:
+        WEIGHT_SIFT = sift
+
+    # Set aerial photo weights (if provided)
+    if aerial_mtb is not None:
+        AERIAL_WEIGHT_MTB = aerial_mtb
+    if aerial_ssim is not None:
+        AERIAL_WEIGHT_SSIM = aerial_ssim
+    if aerial_clip is not None:
+        AERIAL_WEIGHT_CLIP = aerial_clip
+    if aerial_pdq is not None:
+        AERIAL_WEIGHT_PDQ = aerial_pdq
+    if aerial_sift is not None:
+        AERIAL_WEIGHT_SIFT = aerial_sift
+
+
+def get_weights():
+    """
+    Get current weight configuration.
+
+    Returns:
+        dict: Dictionary with 'regular' and 'aerial' weight configurations
+    """
+    return {
+        'regular': {
+            'mtb': WEIGHT_MTB,
+            'ssim': WEIGHT_SSIM,
+            'clip': WEIGHT_CLIP,
+            'pdq': WEIGHT_PDQ,
+            'sift': WEIGHT_SIFT
+        },
+        'aerial': {
+            'mtb': AERIAL_WEIGHT_MTB,
+            'ssim': AERIAL_WEIGHT_SSIM,
+            'clip': AERIAL_WEIGHT_CLIP,
+            'pdq': AERIAL_WEIGHT_PDQ,
+            'sift': AERIAL_WEIGHT_SIFT
+        }
+    }
+
 # ─── helpers: I/O / resize / CLAHE / metadata ─────────────────────────────────
 @lru_cache(maxsize=512)
 def _load_gray(path: str) -> np.ndarray:
