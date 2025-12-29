@@ -1,0 +1,123 @@
+{
+  "statistics": {
+    "total_images": 8,
+    "images_with_duplicates": 8,
+    "unique_pairs": 8,
+    "pairs": [
+      [
+        "combined\\050_Scott Wall - DSC_0098.jpg",
+        "photos-75-knollview-way--san-francisco--ca\\050_Scott Wall - DSC_0098.jpg"
+      ],
+      [
+        "combined\\053_Scott Wall - DSC_0143.jpg",
+        "photos-75-knollview-way--san-francisco--ca\\053_Scott Wall - DSC_0143.jpg"
+      ],
+      [
+        "photos-75-knollview-way--san-francisco--ca\\050_Scott Wall - DSC_0098.jpg",
+        "photos-75-knollview-way--san-francisco--ca\\053_Scott Wall - DSC_0143.jpg"
+      ],
+      [
+        "combined\\053_Scott Wall - DSC_0143.jpg",
+        "photos-75-knollview-way--san-francisco--ca\\050_Scott Wall - DSC_0098.jpg"
+      ],
+      [
+        "combined\\009_Nancy Peppin - IMG_0003.jpg",
+        "photos-706-winchester-blvd--los-gatos--ca-9\\009_Nancy Peppin - IMG_0003.jpg"
+      ],
+      [
+        "combined\\050_Scott Wall - DSC_0098.jpg",
+        "photos-75-knollview-way--san-francisco--ca\\053_Scott Wall - DSC_0143.jpg"
+      ],
+      [
+        "combined\\050_Scott Wall - DSC_0098.jpg",
+        "combined\\053_Scott Wall - DSC_0143.jpg"
+      ],
+      [
+        "combined\\008_Nancy Peppin - IMG_0009.jpg",
+        "photos-706-winchester-blvd--los-gatos--ca-9\\008_Nancy Peppin - IMG_0009.jpg"
+      ]
+    ]
+  },
+  "duplicates": {
+    "combined\\008_Nancy Peppin - IMG_0009.jpg": [
+      [
+        "photos-706-winchester-blvd--los-gatos--ca-9\\008_Nancy Peppin - IMG_0009.jpg",
+        1.0
+      ]
+    ],
+    "combined\\009_Nancy Peppin - IMG_0003.jpg": [
+      [
+        "photos-706-winchester-blvd--los-gatos--ca-9\\009_Nancy Peppin - IMG_0003.jpg",
+        1.0000001192092896
+      ]
+    ],
+    "combined\\050_Scott Wall - DSC_0098.jpg": [
+      [
+        "combined\\053_Scott Wall - DSC_0143.jpg",
+        0.9116815328598022
+      ],
+      [
+        "photos-75-knollview-way--san-francisco--ca\\050_Scott Wall - DSC_0098.jpg",
+        0.9999998807907104
+      ],
+      [
+        "photos-75-knollview-way--san-francisco--ca\\053_Scott Wall - DSC_0143.jpg",
+        0.9116815328598022
+      ]
+    ],
+    "combined\\053_Scott Wall - DSC_0143.jpg": [
+      [
+        "combined\\050_Scott Wall - DSC_0098.jpg",
+        0.9116815328598022
+      ],
+      [
+        "photos-75-knollview-way--san-francisco--ca\\050_Scott Wall - DSC_0098.jpg",
+        0.9116815328598022
+      ],
+      [
+        "photos-75-knollview-way--san-francisco--ca\\053_Scott Wall - DSC_0143.jpg",
+        0.9999996423721313
+      ]
+    ],
+    "photos-706-winchester-blvd--los-gatos--ca-9\\008_Nancy Peppin - IMG_0009.jpg": [
+      [
+        "combined\\008_Nancy Peppin - IMG_0009.jpg",
+        1.0
+      ]
+    ],
+    "photos-706-winchester-blvd--los-gatos--ca-9\\009_Nancy Peppin - IMG_0003.jpg": [
+      [
+        "combined\\009_Nancy Peppin - IMG_0003.jpg",
+        1.0000001192092896
+      ]
+    ],
+    "photos-75-knollview-way--san-francisco--ca\\050_Scott Wall - DSC_0098.jpg": [
+      [
+        "combined\\050_Scott Wall - DSC_0098.jpg",
+        0.9999998807907104
+      ],
+      [
+        "combined\\053_Scott Wall - DSC_0143.jpg",
+        0.9116815328598022
+      ],
+      [
+        "photos-75-knollview-way--san-francisco--ca\\053_Scott Wall - DSC_0143.jpg",
+        0.9116815328598022
+      ]
+    ],
+    "photos-75-knollview-way--san-francisco--ca\\053_Scott Wall - DSC_0143.jpg": [
+      [
+        "combined\\050_Scott Wall - DSC_0098.jpg",
+        0.9116815328598022
+      ],
+      [
+        "combined\\053_Scott Wall - DSC_0143.jpg",
+        0.9999996423721313
+      ],
+      [
+        "photos-75-knollview-way--san-francisco--ca\\050_Scott Wall - DSC_0098.jpg",
+        0.9116815328598022
+      ]
+    ]
+  }
+}

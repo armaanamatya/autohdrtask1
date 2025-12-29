@@ -10,7 +10,7 @@ Near-duplicate remover that now uses
     • PDQ   (optional Hamming distance)
 
 All metrics feed a **weighted composite score** so "almost-high-enough"
-combinations can still count as duplicates.  
+combinations can still count as duplicates.
 ⚠️ Logging restored to original verbosity (pair details, Δ-stats,
 'Triggered by', etc.).
 
@@ -73,24 +73,24 @@ EXPERIMENT_LOG_FILE = "experiment_logs.md"
 
 class ExperimentLogger:
     """Captures log output and writes experiment results to markdown"""
-    
+
     def __init__(self):
         self.log_capture = io.StringIO()
         self.handler: Optional[logging.Handler] = None
         self.comparison_results: List[Dict[str, Any]] = []
         self.input_count = 0
         self.output_count = 0
-    
+
     def start_capture(self) -> None:
         self.handler = logging.StreamHandler(self.log_capture)
         self.handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         logger.addHandler(self.handler)
-    
+
     def stop_capture(self) -> str:
         if self.handler:
             logger.removeHandler(self.handler)
         return self.log_capture.getvalue()
-    
+
     def add_comparison(self, img_a: str, img_b: str, mtb: float, edge: float,
                        ssim: float, clip: float, pdq_hd: int, sift_matches: int,
                        score: float, dropped: bool, drop_reason: str) -> None:
@@ -107,10 +107,10 @@ class ExperimentLogger:
             "dropped": dropped,
             "drop_reason": drop_reason
         })
-    
+
     def write_experiment_log(self, experiment_name: str, terminal_output: str, log_file: str) -> None:
         log_path = Path(log_file)
-        
+
         # Build the complete markdown file
         entry = f"""# {experiment_name}
 
@@ -141,7 +141,7 @@ class ExperimentLogger:
             if not r["dropped"] and r["drop_reason"]:
                 dropped_str = f"No ({r['drop_reason']})"
             entry += f"| {r['img_a']} | {r['img_b']} | {r['mtb']:.1f} | {r['edge']:.1f} | {r['ssim']:.1f} | {r['clip']:.1f} | {r['pdq_hd']} | {r['sift_matches']} | {r['score']:.2f} | {dropped_str} |\n"
-        
+
         entry += f"""
 ## Summary
 
@@ -158,7 +158,7 @@ class ExperimentLogger:
         # Write to file (overwrite)
         with open(log_path, "w", encoding="utf-8") as f:
             f.write(entry)
-        
+
         logger.info(f"Experiment logged to {log_path}")
 
 _experiment_logger: Optional[ExperimentLogger] = None
@@ -176,9 +176,9 @@ PDQ_HD_CEIL    = 115      # HD ≥ this ⇒ totally different
 
 # weighted-score config for REGULAR photos (weights must sum to 1.0)
 WEIGHT_MTB  = 0.30
-WEIGHT_SSIM = 0.10  # ENABLED - Testing with SSIM
-WEIGHT_CLIP = 0.25  # Reduced from 0.30 to make room for SSIM
-WEIGHT_PDQ  = 0.25  # Reduced from 0.30 to make room for SSIM
+WEIGHT_SSIM = 0.10   # ✅ ENABLED - 10% weight
+WEIGHT_CLIP = 0.25   # ✅ REDUCED from 0.30 to 0.25
+WEIGHT_PDQ  = 0.25   # ✅ REDUCED from 0.30 to 0.25
 WEIGHT_SIFT = 0.10
 COMPOSITE_DUP_THRESHOLD = 0.35    # 0–1 scale
 SIFT_MIN_MATCHES = 50            # Minimum SIFT matches to consider as duplicate
@@ -190,80 +190,14 @@ AERIAL_PDQ_HD_CEIL    = 130      # HD ≥ this ⇒ totally different
 
 # weighted-score config for AERIAL photos (weights must sum to 1.0)
 AERIAL_WEIGHT_MTB  = 0.30
-AERIAL_WEIGHT_SSIM = 0.10  # ENABLED - Testing with SSIM
-AERIAL_WEIGHT_CLIP = 0.25  # Reduced from 0.30 to make room for SSIM
-AERIAL_WEIGHT_PDQ  = 0.25  # Reduced from 0.30 to make room for SSIM
+AERIAL_WEIGHT_SSIM = 0.10   # ✅ ENABLED - 10% weight
+AERIAL_WEIGHT_CLIP = 0.25   # ✅ REDUCED from 0.30 to 0.25
+AERIAL_WEIGHT_PDQ  = 0.25   # ✅ REDUCED from 0.30 to 0.25
 AERIAL_WEIGHT_SIFT = 0.10
 AERIAL_COMPOSITE_DUP_THRESHOLD = 0.32    # 0–1 scale
 AERIAL_SIFT_MIN_MATCHES = 50              # Minimum SIFT matches for aerial photos
 
 MAX_WORKERS = 16
-
-# ─── weight configuration helper ──────────────────────────────────────────────
-def set_weights(mtb=None, ssim=None, clip=None, pdq=None, sift=None,
-                aerial_mtb=None, aerial_ssim=None, aerial_clip=None,
-                aerial_pdq=None, aerial_sift=None):
-    """
-    Set global weight variables for batch testing.
-
-    Args:
-        mtb, ssim, clip, pdq, sift: Weights for regular photos (0.0-1.0)
-        aerial_*: Weights for aerial photos (0.0-1.0)
-
-    Note: Weights should sum to 1.0. This function does NOT validate the sum.
-    """
-    global WEIGHT_MTB, WEIGHT_SSIM, WEIGHT_CLIP, WEIGHT_PDQ, WEIGHT_SIFT
-    global AERIAL_WEIGHT_MTB, AERIAL_WEIGHT_SSIM, AERIAL_WEIGHT_CLIP
-    global AERIAL_WEIGHT_PDQ, AERIAL_WEIGHT_SIFT
-
-    # Set regular photo weights
-    if mtb is not None:
-        WEIGHT_MTB = mtb
-    if ssim is not None:
-        WEIGHT_SSIM = ssim
-    if clip is not None:
-        WEIGHT_CLIP = clip
-    if pdq is not None:
-        WEIGHT_PDQ = pdq
-    if sift is not None:
-        WEIGHT_SIFT = sift
-
-    # Set aerial photo weights (if provided)
-    if aerial_mtb is not None:
-        AERIAL_WEIGHT_MTB = aerial_mtb
-    if aerial_ssim is not None:
-        AERIAL_WEIGHT_SSIM = aerial_ssim
-    if aerial_clip is not None:
-        AERIAL_WEIGHT_CLIP = aerial_clip
-    if aerial_pdq is not None:
-        AERIAL_WEIGHT_PDQ = aerial_pdq
-    if aerial_sift is not None:
-        AERIAL_WEIGHT_SIFT = aerial_sift
-
-
-def get_weights():
-    """
-    Get current weight configuration.
-
-    Returns:
-        dict: Dictionary with 'regular' and 'aerial' weight configurations
-    """
-    return {
-        'regular': {
-            'mtb': WEIGHT_MTB,
-            'ssim': WEIGHT_SSIM,
-            'clip': WEIGHT_CLIP,
-            'pdq': WEIGHT_PDQ,
-            'sift': WEIGHT_SIFT
-        },
-        'aerial': {
-            'mtb': AERIAL_WEIGHT_MTB,
-            'ssim': AERIAL_WEIGHT_SSIM,
-            'clip': AERIAL_WEIGHT_CLIP,
-            'pdq': AERIAL_WEIGHT_PDQ,
-            'sift': AERIAL_WEIGHT_SIFT
-        }
-    }
 
 # ─── helpers: I/O / resize / CLAHE / metadata ─────────────────────────────────
 @lru_cache(maxsize=512)
@@ -286,25 +220,25 @@ def _resize_to_exact_size(img: np.ndarray, target_size: int) -> np.ndarray:
     h, w = img.shape[:2]
     if h == target_size and w == target_size:
         return img
-    
+
     # Calculate scale to fit the longer dimension to target_size
     scale = target_size / max(h, w)
     new_h, new_w = int(h * scale), int(w * scale)
-    
+
     # Resize image
     resized = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
-    
+
     # If not square, crop to center square
     if new_h != new_w:
         min_dim = min(new_h, new_w)
         start_h = (new_h - min_dim) // 2
         start_w = (new_w - min_dim) // 2
         resized = resized[start_h:start_h+min_dim, start_w:start_w+min_dim]
-    
+
     # Final resize to exact target size if needed
     if resized.shape[0] != target_size or resized.shape[1] != target_size:
         resized = cv2.resize(resized, (target_size, target_size), interpolation=cv2.INTER_AREA)
-    
+
     return resized
 
 def _apply_clahe(img: np.ndarray) -> np.ndarray:
@@ -399,29 +333,29 @@ def _compute_sift_matches(path_a: str, path_b: str, min_matches: int = 50) -> in
     try:
         img1 = cv2.imread(path_a, cv2.IMREAD_GRAYSCALE)
         img2 = cv2.imread(path_b, cv2.IMREAD_GRAYSCALE)
-        
+
         if img1 is None or img2 is None:
             return 0
-        
+
         # Create SIFT detector
         sift = cv2.SIFT_create()
-        
+
         # Detect keypoints and descriptors
         kp1, des1 = sift.detectAndCompute(img1, None)
         kp2, des2 = sift.detectAndCompute(img2, None)
-        
+
         if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
             return 0
-        
+
         # FLANN-based matcher
         FLANN_INDEX_KDTREE = 1
         index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
         search_params = dict(checks=50)
         flann = cv2.FlannBasedMatcher(index_params, search_params)
-        
+
         # Match descriptors
         matches = flann.knnMatch(des1, des2, k=2)
-        
+
         # Apply Lowe's ratio test
         good_matches = []
         for match_pair in matches:
@@ -429,7 +363,7 @@ def _compute_sift_matches(path_a: str, path_b: str, min_matches: int = 50) -> in
                 m, n = match_pair
                 if m.distance < 0.7 * n.distance:
                     good_matches.append(m)
-        
+
         return len(good_matches)
     except Exception as e:
         logger.debug(f"SIFT computation failed for {path_a} vs {path_b}: {e}")
@@ -595,11 +529,10 @@ def remove_near_duplicates(
         drop_reason = ""
         if score >= dup_threshold:
             trigger_metrics.append(f"SCORE({score:.2f}≥{dup_threshold})")
-        
+
         # SIFT override: If SIFT matches are high and CLIP is high, allow override of MTB floor AND PDQ ceiling
-        # sift_override = (sift_matches >= sift_min) and (clip >= 85.0)
-        sift_override = False  # DISABLED FOR TESTING - Testing without SIFT override
-        
+        sift_override = (sift_matches >= sift_min) and (clip >= 85.0)
+
         if mtb < mtb_floor and not sift_override:
             trigger_metrics.append(f"MTB_FLOOR_FAIL({mtb:.1f}<{mtb_floor})")
             drop_reason = f"MTB < {mtb_floor}"
@@ -623,7 +556,7 @@ def remove_near_duplicates(
 
         # Allow duplicate if: (score high AND (MTB floor passed OR SIFT override)) AND (PDQ ceiling passed OR SIFT override)
         dup = (score >= dup_threshold) and ((mtb >= mtb_floor) or sift_override) and ((hd < pdq_ceil) or sift_override)
-        
+
         if sift_override:
             trigger_metrics.append(f"SIFT_OVERRIDE({sift_matches}≥{sift_min}, CLIP={clip:.1f}≥85.0)")
 
@@ -649,18 +582,18 @@ def remove_near_duplicates(
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Near-duplicate image remover")
     parser.add_argument("--log-experiment", type=str, default=None,
                         help="Name for this experiment")
     parser.add_argument("--log-file", type=str, default="experiment_logs.md",
                         help="File to log experiment results to")
     args = parser.parse_args()
-    
+
     # Option 1: Load from a single folder (one group per image)
     # folder = "combined"
     # groups = [[str(img)] for img in Path(folder).glob("*.jpg")]
-    
+
     # Option 2: Load from multiple folders
     # With full_scan=False: Only compares ADJACENT images
     # Images from same folder are grouped together, so they'll be compared
@@ -675,10 +608,10 @@ if __name__ == "__main__":
             folder_images = sorted(Path(folder).glob("*.jpg"))
             for img in folder_images:
                 groups.append([str(img)])
-    
+
     # Option 3: Use combined folder if you want all images together
     # groups = [[str(img)] for img in Path("combined").glob("*.jpg")]
-    
+
     # Fallback: Hardcoded paths (for testing)
     if not groups:
         groups = [
@@ -687,18 +620,18 @@ if __name__ == "__main__":
             [r"combined\050_Scott Wall - DSC_0098.jpg"],
             [r"combined\053_Scott Wall - DSC_0143.jpg"],
         ]
-    
+
     # Setup experiment logging if requested
     if args.log_experiment:
         _experiment_logger = ExperimentLogger()
         _experiment_logger.start_capture()
         _experiment_logger.input_count = len(groups)
-    
+
     logger.info(f"Number of groups before deduplication: {len(groups)}")
     logger.info(f"Using full_scan=False: Only comparing adjacent images (sequential pairs)")
     filtered = remove_near_duplicates(groups, deduplication_flag=1, full_scan=False)
     logger.info(f"Number of groups after deduplication: {len(filtered)}")
-    
+
     # Write experiment log if requested
     if args.log_experiment and _experiment_logger:
         _experiment_logger.output_count = len(filtered)

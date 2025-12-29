@@ -19,6 +19,7 @@ training-data-approaches.md
 zero-shot-approaches.md
 stats.md
 compositescore.md
+README.md
 
 # Generated/output directories
 combined/
@@ -26,3 +27,5 @@ combined/
 # Data files (if generated)
 groundtruth.txt
 q&a.md
+
+batch_results/
