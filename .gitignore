@@ -29,3 +29,5 @@ groundtruth.txt
 q&a.md
 
 batch_results/
+images/
+download_progress.json
