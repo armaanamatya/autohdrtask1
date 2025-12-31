@@ -29,6 +29,7 @@ import logging
 import os
 import io
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from functools import lru_cache
@@ -60,6 +61,7 @@ if USE_CLIP:
     try:
         import torch, open_clip
         _clip_model = _clip_pre = _clip_device = None
+        _clip_lock = threading.Lock()  # Prevent race condition in model loading
     except ImportError:
         USE_CLIP = False
 
@@ -372,11 +374,16 @@ def _safe_clip_embed(path: str) -> Optional[np.ndarray]:
     global _clip_model, _clip_pre, _clip_device
     try:
         import PIL.Image as Image
+        # Use lock to prevent multiple threads from loading model simultaneously
         if _clip_model is None:
-            _clip_device = "cuda" if torch.cuda.is_available() else "cpu"
-            _clip_model, _clip_pre, _ = open_clip.create_model_and_transforms(
-                "ViT-B-32", pretrained="openai", device=_clip_device)
-            _clip_model.eval()
+            with _clip_lock:
+                # Double-check after acquiring lock (another thread might have loaded it)
+                if _clip_model is None:
+                    _clip_device = "cuda" if torch.cuda.is_available() else "cpu"
+                    _clip_model, _clip_pre, _ = open_clip.create_model_and_transforms(
+                        "ViT-B-32", pretrained="openai", device=_clip_device)
+                    _clip_model.eval()
+                    logger.info(f"CLIP model loaded on {_clip_device}")
         img = Image.open(path).convert("RGB")
         t = _clip_pre(img).unsqueeze(0).to(_clip_device)
         with torch.no_grad():
@@ -597,8 +604,7 @@ def remove_near_duplicates(
             trigger_metrics.append(f"SCORE({score:.2f}≥{dup_threshold})")
         
         # SIFT override: If SIFT matches are high and CLIP is high, allow override of MTB floor AND PDQ ceiling
-        # sift_override = (sift_matches >= sift_min) and (clip >= 85.0)
-        sift_override = False  # DISABLED FOR TESTING - Testing without SIFT override
+        sift_override = (sift_matches >= sift_min) and (clip >= 85.0)
         
         if mtb < mtb_floor and not sift_override:
             trigger_metrics.append(f"MTB_FLOOR_FAIL({mtb:.1f}<{mtb_floor})")
