@@ -1,3 +1,8 @@
 https://arxiv.org/pdf/1710.02726
 https://www.cs.ubc.ca/~lowe/papers/ijcv04.pdf
 https://github.com/adumrewal/SIFTImageSimilarity
+https://github.com/jacobmarks/image-deduplication-plugin
+https://blog.roboflow.com/sift/#detecting-descriptor
+https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
+https://github.com/towhee-io/examples/blob/main/image/image_deduplication/image_deduplication.ipynb
+https://www.quora.com/How-do-I-find-duplicate-photos-of-different-size-quality
