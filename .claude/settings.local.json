@@ -3,7 +3,8 @@
     "allow": [
       "Bash(./venv/Scripts/python.exe:*)",
       "Bash(grep:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(nvidia-smi:*)"
     ]
   }
 }
