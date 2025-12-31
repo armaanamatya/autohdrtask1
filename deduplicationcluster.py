@@ -599,10 +599,18 @@ if __name__ == "__main__":
     
     # Generate markdown report
     if args.folders:
-        folder_name = Path(args.folders[0]).name
+        # Extract parent folder name if path contains 'processed' or similar
+        folder_path = Path(args.folders[0])
+        if folder_path.name == "processed" and folder_path.parent.exists():
+            folder_name = folder_path.parent.name
+        else:
+            folder_name = folder_path.name
+        # Save report in the folder's parent directory
+        report_dir = folder_path.parent if folder_path.name == "processed" else folder_path
+        report_path = report_dir / f"{folder_name}_cluster_report.md"
     else:
         folder_name = "00a959b5-1b0b-4670-9c07-5df8b7636cfe"
+        report_path = Path(f"{folder_name}_cluster_report.md")
     
-    report_path = Path(f"{folder_name}_cluster_report.md")
     generate_markdown_report(stats, report_path)
     logger.info(f"\n📊 Detailed report saved to: {report_path}")
