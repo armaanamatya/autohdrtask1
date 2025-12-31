@@ -183,7 +183,7 @@ WEIGHT_CLIP = 0.25  # Reduced from 0.30 to make room for SSIM
 WEIGHT_PDQ  = 0.25  # Reduced from 0.30 to make room for SSIM
 WEIGHT_SIFT = 0.10
 COMPOSITE_DUP_THRESHOLD = 0.35    # 0–1 scale
-SIFT_MIN_MATCHES = 50            # Minimum SIFT matches to consider as duplicate
+SIFT_MIN_MATCHES = 150            # Minimum SIFT matches to consider as duplicate (INCREASED FROM 50)
 
 
 # safety guardrails for AERIAL photos
@@ -197,7 +197,7 @@ AERIAL_WEIGHT_CLIP = 0.25  # Reduced from 0.30 to make room for SSIM
 AERIAL_WEIGHT_PDQ  = 0.25  # Reduced from 0.30 to make room for SSIM
 AERIAL_WEIGHT_SIFT = 0.10
 AERIAL_COMPOSITE_DUP_THRESHOLD = 0.32    # 0–1 scale
-AERIAL_SIFT_MIN_MATCHES = 50              # Minimum SIFT matches for aerial photos
+AERIAL_SIFT_MIN_MATCHES = 150              # Minimum SIFT matches for aerial photos (INCREASED FROM 50)
 
 MAX_WORKERS = 16
 
@@ -368,17 +368,10 @@ def _pdq_hd(a: np.ndarray, b: np.ndarray) -> int:
     return int(np.count_nonzero(a ^ b))
 
 # ─── CLIP helpers ─────────────────────────────────────────────────────────────
-_clip_failed = False  # Track if CLIP has permanently failed
-
 def _safe_clip_embed(path: str) -> Optional[np.ndarray]:
     if not USE_CLIP:
         return None
-    global _clip_model, _clip_pre, _clip_device, _clip_failed
-
-    # If CLIP has already failed, don't keep trying
-    if _clip_failed:
-        return None
-
+    global _clip_model, _clip_pre, _clip_device
     try:
         import PIL.Image as Image
         # Use lock to prevent multiple threads from loading model simultaneously
@@ -386,51 +379,17 @@ def _safe_clip_embed(path: str) -> Optional[np.ndarray]:
             with _clip_lock:
                 # Double-check after acquiring lock (another thread might have loaded it)
                 if _clip_model is None:
-                    # Try CUDA first if available
-                    if torch.cuda.is_available():
-                        try:
-                            _clip_device = "cuda"
-                            _clip_model, _clip_pre, _ = open_clip.create_model_and_transforms(
-                                "ViT-B-32", pretrained="openai", device=_clip_device)
-                            _clip_model.eval()
-
-                            # Test if CUDA actually works by encoding a dummy tensor
-                            test_tensor = torch.randn(1, 3, 224, 224).to(_clip_device)
-                            with torch.no_grad():
-                                test_emb = _clip_model.encode_image(test_tensor)
-
-                            logger.info(f"CLIP model loaded on CUDA successfully")
-                        except Exception as cuda_err:
-                            logger.warning(f"CLIP CUDA failed ({cuda_err}), falling back to CPU")
-                            _clip_device = "cpu"
-                            _clip_model, _clip_pre, _ = open_clip.create_model_and_transforms(
-                                "ViT-B-32", pretrained="openai", device=_clip_device)
-                            _clip_model.eval()
-                            logger.info(f"CLIP model loaded on CPU successfully")
-                    else:
-                        _clip_device = "cpu"
-                        _clip_model, _clip_pre, _ = open_clip.create_model_and_transforms(
-                            "ViT-B-32", pretrained="openai", device=_clip_device)
-                        _clip_model.eval()
-                        logger.info(f"CLIP model loaded on CPU (CUDA not available)")
-
+                    _clip_device = "cuda" if torch.cuda.is_available() else "cpu"
+                    _clip_model, _clip_pre, _ = open_clip.create_model_and_transforms(
+                        "ViT-B-32", pretrained="openai", device=_clip_device)
+                    _clip_model.eval()
+                    logger.info(f"CLIP model loaded on {_clip_device}")
         img = Image.open(path).convert("RGB")
         t = _clip_pre(img).unsqueeze(0).to(_clip_device)
         with torch.no_grad():
             emb = _clip_model.encode_image(t).cpu().squeeze()
-
-        # Verify embedding is valid
-        if emb is None or emb.numel() == 0 or torch.isnan(emb).any():
-            logger.error(f"CLIP produced invalid embedding for {path}")
-            return None
-
         return (emb / (emb.norm() + 1e-8)).numpy()
-    except Exception as e:
-        logger.error(f"CLIP embedding failed for {path}: {e}")
-        # Mark CLIP as failed to avoid repeated attempts
-        if "CUDA" in str(e) or "device" in str(e).lower():
-            logger.error("CLIP appears to have device issues, disabling for this session")
-            _clip_failed = True
+    except Exception:
         return None
 
 def _cosine(a: np.ndarray, b: np.ndarray) -> float:
@@ -643,10 +602,9 @@ def remove_near_duplicates(
         drop_reason = ""
         if score >= dup_threshold:
             trigger_metrics.append(f"SCORE({score:.2f}≥{dup_threshold})")
-
-        # SIFT override: If SIFT matches are high OR (SIFT moderate AND CLIP high), allow override of MTB floor AND PDQ ceiling
-        # This allows SIFT alone to override when matches are very strong, or SIFT+CLIP combination for moderate matches
-        sift_override = (sift_matches >= sift_min * 1.5) or ((sift_matches >= sift_min) and (clip >= 85.0))
+        
+        # SIFT override: If SIFT matches are high and CLIP is high, allow override of MTB floor AND PDQ ceiling
+        sift_override = (sift_matches >= sift_min) and (clip >= 85.0)
         
         if mtb < mtb_floor and not sift_override:
             trigger_metrics.append(f"MTB_FLOOR_FAIL({mtb:.1f}<{mtb_floor})")
@@ -671,12 +629,9 @@ def remove_near_duplicates(
 
         # Allow duplicate if: (score high AND (MTB floor passed OR SIFT override)) AND (PDQ ceiling passed OR SIFT override)
         dup = (score >= dup_threshold) and ((mtb >= mtb_floor) or sift_override) and ((hd < pdq_ceil) or sift_override)
-
+        
         if sift_override:
-            if sift_matches >= sift_min * 1.5:
-                trigger_metrics.append(f"SIFT_OVERRIDE(HIGH: {sift_matches}≥{sift_min * 1.5:.0f})")
-            else:
-                trigger_metrics.append(f"SIFT_OVERRIDE(COMBO: SIFT={sift_matches}≥{sift_min}, CLIP={clip:.1f}≥85.0)")
+            trigger_metrics.append(f"SIFT_OVERRIDE({sift_matches}≥{sift_min}, CLIP={clip:.1f}≥85.0)")
 
         if dup:
             _drop(i, mtb, edge, hd, ssim, clip, score, trigger_metrics, is_aerial_i)
