@@ -596,6 +596,11 @@ def remove_near_duplicates(
     for i, j in idx_pairs:
         if not keep[i] or not keep[j]:
             continue
+        
+        # Skip self-comparisons (shouldn't happen, but safety check)
+        if mids[i] == mids[j]:
+            logger.debug("Skipping self-comparison: %s", mids[i])
+            continue
 
         mtb, edge, hd, ssim, clip, sift_matches = _pair_sim(mids[i], mids[j])
         if hd == 999:
