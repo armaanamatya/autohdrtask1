@@ -25,8 +25,8 @@ except ImportError:
     PIL_AVAILABLE = False
 
 # Import deduplication module
-import deduplication as dedupe
-from deduplication import (
+import deduplicationwnew as dedupe
+from deduplicationwnew import (
     remove_near_duplicates,
     ExperimentLogger,
     WEIGHT_MTB, WEIGHT_SSIM, WEIGHT_CLIP, WEIGHT_PDQ, WEIGHT_SIFT,
@@ -220,7 +220,7 @@ def generate_folder_markdown(result: Dict[str, Any], output_dir: Path) -> str:
     folder_name = Path(result['folder_path']).name
     
     # Create output filename
-    output_file = output_dir / f"folder_{folder_num}_report.md"
+    output_file = output_dir / f"folder_{folder_num}_report_new.md"
     
     # Calculate statistics for this folder
     comparisons = result['comparisons']
