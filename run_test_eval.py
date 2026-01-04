@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Test evaluation script for deduplication.py
-Runs deduplication on folders 1-10 and generates comprehensive markdown report.
+Test evaluation script for dedup_fixed_drift.py
+Runs deduplication with drift fix on folders 1-10 and generates comprehensive markdown report.
+Uses drift fix: compares each frame against last KEPT frame instead of previous frame.
 """
 
 from __future__ import annotations
@@ -25,8 +26,8 @@ except ImportError:
     PIL_AVAILABLE = False
 
 # Import deduplication module
-import deduplicationwnew as dedupe
-from deduplicationwnew import (
+import dedup_fixed_drift as dedupe
+from dedup_fixed_drift import (
     remove_near_duplicates,
     ExperimentLogger,
     WEIGHT_MTB, WEIGHT_SSIM, WEIGHT_CLIP, WEIGHT_PDQ, WEIGHT_SIFT,
@@ -220,7 +221,7 @@ def generate_folder_markdown(result: Dict[str, Any], output_dir: Path) -> str:
     folder_name = Path(result['folder_path']).name
     
     # Create output filename
-    output_file = output_dir / f"folder_{folder_num}_report_optimized.md"
+    output_file = output_dir / f"folder_{folder_num}_driftsolv.md"
     
     # Calculate statistics for this folder
     comparisons = result['comparisons']
