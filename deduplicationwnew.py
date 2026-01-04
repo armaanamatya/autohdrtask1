@@ -171,33 +171,31 @@ BLUR_SIZE, CANNY1, CANNY2 = 5, 50, 150
 USE_AUTO_CANNY, SIGMA, USE_CLAHE = True, 0.33, True
 
 # safety guardrails
-MTB_HARD_FLOOR = 67.0     # never drop if below this MTB %
-PDQ_HD_CEIL    = 115      # HD ≥ this ⇒ totally different
-
-
+MTB_HARD_FLOOR = 58.0     # never drop if below this MTB % (lowered to catch duplicates while protecting HDR)
+PDQ_HD_CEIL    = 140      # HD ≥ this ⇒ totally different
 
 # weighted-score config for REGULAR photos (weights must sum to 1.0)
-WEIGHT_MTB  = 0.30
-WEIGHT_SSIM = 0.10  # ENABLED - Testing with SSIM
-WEIGHT_CLIP = 0.25  # Reduced from 0.30 to make room for SSIM
-WEIGHT_PDQ  = 0.25  # Reduced from 0.30 to make room for SSIM
-WEIGHT_SIFT = 0.10
-COMPOSITE_DUP_THRESHOLD = 0.35    # 0–1 scale
-SIFT_MIN_MATCHES = 50            # Minimum SIFT matches to consider as duplicate
+WEIGHT_MTB  = 0.4  # Increased - brightness difference matters more for HDR preservation
+WEIGHT_SSIM = 0.1  # ENABLED - Testing with SSIM
+WEIGHT_CLIP = 0.2  # Keep same - semantic similarity
+WEIGHT_PDQ  = 0.15  # Reduced to make room for MTB
+WEIGHT_SIFT = 0.15  # Reduced - de-emphasize in composite (still use override)
+COMPOSITE_DUP_THRESHOLD = 0.55   # 0–1 scale (increased - harder to classify as duplicate)
+SIFT_MIN_MATCHES = 150            # Minimum SIFT matches (raised for HDR preservation)
 
 
 # safety guardrails for AERIAL photos
-AERIAL_MTB_HARD_FLOOR = 62.0     # never drop if below this MTB %
+AERIAL_MTB_HARD_FLOOR = 55.0     # never drop if below this MTB % (lowered for same reasons as regular)
 AERIAL_PDQ_HD_CEIL    = 130      # HD ≥ this ⇒ totally different
 
 # weighted-score config for AERIAL photos (weights must sum to 1.0)
-AERIAL_WEIGHT_MTB  = 0.30
+AERIAL_WEIGHT_MTB  = 0.40  # Increased - brightness difference matters
 AERIAL_WEIGHT_SSIM = 0.10  # ENABLED - Testing with SSIM
-AERIAL_WEIGHT_CLIP = 0.25  # Reduced from 0.30 to make room for SSIM
-AERIAL_WEIGHT_PDQ  = 0.25  # Reduced from 0.30 to make room for SSIM
-AERIAL_WEIGHT_SIFT = 0.10
-AERIAL_COMPOSITE_DUP_THRESHOLD = 0.32    # 0–1 scale
-AERIAL_SIFT_MIN_MATCHES = 50              # Minimum SIFT matches for aerial photos
+AERIAL_WEIGHT_CLIP = 0.25  # Keep higher - semantic similarity more reliable for aerial
+AERIAL_WEIGHT_PDQ  = 0.15  # Reduced to accommodate MTB
+AERIAL_WEIGHT_SIFT = 0.10  # Keep lower - less reliable for aerial perspective changes
+AERIAL_COMPOSITE_DUP_THRESHOLD = 0.38    # 0–1 scale (increased from 0.32)
+AERIAL_SIFT_MIN_MATCHES = 100              # Minimum SIFT matches (increased from 50)
 
 MAX_WORKERS = 16
 
@@ -649,9 +647,10 @@ def remove_near_duplicates(
         if score >= dup_threshold:
             trigger_metrics.append(f"SCORE({score:.2f}≥{dup_threshold})")
 
-        # SIFT override: If SIFT matches are high OR (SIFT moderate AND CLIP high), allow override of MTB floor AND PDQ ceiling
-        # This allows SIFT alone to override when matches are very strong, or SIFT+CLIP combination for moderate matches
-        sift_override = (sift_matches >= sift_min * 1.5) or ((sift_matches >= sift_min) and (clip >= 85.0))
+        # SIFT override: If SIFT matches are EXTREMELY high OR (SIFT moderate AND CLIP very high), allow override of MTB floor AND PDQ ceiling
+        # Raised from 1.5x to 3.0x to prevent HDR brackets (500-1500 matches) from triggering override
+        # Only burst mode (2000-3000+ matches) should trigger high override; raised CLIP threshold to 92% for combo
+        sift_override = (sift_matches >= sift_min * 3.0) or ((sift_matches >= sift_min) and (clip >= 92.0))
         
         if mtb < mtb_floor and not sift_override:
             trigger_metrics.append(f"MTB_FLOOR_FAIL({mtb:.1f}<{mtb_floor})")
@@ -678,10 +677,10 @@ def remove_near_duplicates(
         dup = (score >= dup_threshold) and ((mtb >= mtb_floor) or sift_override) and ((hd < pdq_ceil) or sift_override)
 
         if sift_override:
-            if sift_matches >= sift_min * 1.5:
-                trigger_metrics.append(f"SIFT_OVERRIDE(HIGH: {sift_matches}≥{sift_min * 1.5:.0f})")
+            if sift_matches >= sift_min * 3.0:
+                trigger_metrics.append(f"SIFT_OVERRIDE(HIGH: {sift_matches}≥{sift_min * 3.0:.0f})")
             else:
-                trigger_metrics.append(f"SIFT_OVERRIDE(COMBO: SIFT={sift_matches}≥{sift_min}, CLIP={clip:.1f}≥85.0)")
+                trigger_metrics.append(f"SIFT_OVERRIDE(COMBO: SIFT={sift_matches}≥{sift_min}, CLIP={clip:.1f}≥92.0)")
 
         if dup:
             _drop(i, mtb, edge, hd, ssim, clip, score, trigger_metrics, is_aerial_i)
