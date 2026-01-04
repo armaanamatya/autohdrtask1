@@ -174,15 +174,13 @@ USE_AUTO_CANNY, SIGMA, USE_CLAHE = True, 0.33, True
 MTB_HARD_FLOOR = 63.0     # never drop if below this MTB %
 PDQ_HD_CEIL    = 140      # HD ≥ this ⇒ totally different
 
-
-
 # weighted-score config for REGULAR photos (weights must sum to 1.0)
 WEIGHT_MTB  = 0.3
 WEIGHT_SSIM = 0.1  # ENABLED - Testing with SSIM
 WEIGHT_CLIP = 0.2  # Reduced from 0.30 to make room for SSIM
 WEIGHT_PDQ  = 0.2  # Reduced from 0.30 to make room for SSIM
 WEIGHT_SIFT = 0.2
-COMPOSITE_DUP_THRESHOLD = 0.45    # 0–1 scale
+COMPOSITE_DUP_THRESHOLD = 0.5   # 0–1 scale
 SIFT_MIN_MATCHES = 100            # Minimum SIFT matches to consider as duplicate
 
 
