@@ -220,7 +220,7 @@ def generate_folder_markdown(result: Dict[str, Any], output_dir: Path) -> str:
     folder_name = Path(result['folder_path']).name
     
     # Create output filename
-    output_file = output_dir / f"folder_{folder_num}_report_new.md"
+    output_file = output_dir / f"folder_{folder_num}_report_optimized.md"
     
     # Calculate statistics for this folder
     comparisons = result['comparisons']
