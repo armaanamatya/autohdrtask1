@@ -735,51 +735,285 @@ def remove_near_duplicates(
 
 
 
+def generate_thumbnail(img_path: str, output_path: str, size: int = 200) -> bool:
+    """Generate thumbnail for an image"""
+    try:
+        from PIL import Image
+        img = Image.open(img_path)
+        img.thumbnail((size, size), Image.Resampling.LANCZOS)
+        img.save(output_path, "JPEG", quality=85)
+        return True
+    except Exception as e:
+        logger.error(f"Failed to generate thumbnail for {img_path}: {e}")
+        return False
+
+
+def generate_folder_report(folder_name: str, output_dir: str, groups_before: List[List[str]],
+                          groups_after: List[List[str]], comparisons: List[Dict[str, Any]],
+                          dropped_images: List[str]) -> None:
+    """Generate markdown report with visualizations and statistics for a folder"""
+
+    # Create thumbnails directory
+    thumb_dir = Path(output_dir) / "thumbnails"
+    thumb_dir.mkdir(parents=True, exist_ok=True)
+
+    # Calculate statistics
+    n_input = len(groups_before)
+    n_output = len(groups_after)
+    n_dropped = n_input - n_output
+    removal_rate = (n_dropped / n_input * 100) if n_input > 0 else 0.0
+
+    # Statistics from comparisons
+    if comparisons:
+        mtb_vals = [c['mtb'] for c in comparisons]
+        edge_vals = [c['edge'] for c in comparisons]
+        ssim_vals = [c['ssim'] for c in comparisons]
+        clip_vals = [c['clip'] for c in comparisons]
+        pdq_vals = [c['pdq_hd'] for c in comparisons]
+        phash_vals = [c['phash_hd'] for c in comparisons]
+        sift_vals = [c['sift_matches'] for c in comparisons]
+        score_vals = [c['score'] for c in comparisons]
+
+        def stats(vals):
+            return {
+                'mean': np.mean(vals),
+                'median': np.median(vals),
+                'min': np.min(vals),
+                'max': np.max(vals),
+                'std': np.std(vals)
+            }
+    else:
+        mtb_vals = edge_vals = ssim_vals = clip_vals = pdq_vals = phash_vals = sift_vals = score_vals = []
+
+    # Generate report
+    report_path = Path(output_dir) / f"{folder_name}_report_phash.md"
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(f"# Folder Deduplication Report (with pHash): {folder_name}\n\n")
+        f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
+        # Summary
+        f.write("## Summary\n\n")
+        f.write("| Metric | Value |\n")
+        f.write("|--------|-------|\n")
+        f.write(f"| **Input Images** | {n_input} |\n")
+        f.write(f"| **Output Images** | {n_output} |\n")
+        f.write(f"| **Duplicates Removed** | {n_dropped} |\n")
+        f.write(f"| **Removal Rate** | {removal_rate:.1f}% |\n")
+        f.write(f"| **Comparisons Made** | {len(comparisons)} |\n")
+        f.write(f"| **Status** | ✅ Success |\n\n")
+
+        # Configuration
+        f.write("## Configuration\n\n")
+        f.write("| Parameter | Value |\n")
+        f.write("|-----------|-------|\n")
+        f.write(f"| USE_CLIP | {USE_CLIP} |\n")
+        f.write(f"| WEIGHT_MTB | {WEIGHT_MTB} |\n")
+        f.write(f"| WEIGHT_SSIM | {WEIGHT_SSIM} |\n")
+        f.write(f"| WEIGHT_CLIP | {WEIGHT_CLIP} |\n")
+        f.write(f"| WEIGHT_PDQ | {WEIGHT_PDQ} |\n")
+        f.write(f"| WEIGHT_PHASH | {WEIGHT_PHASH} ✨ |\n")
+        f.write(f"| WEIGHT_SIFT | {WEIGHT_SIFT} |\n")
+        f.write(f"| COMPOSITE_DUP_THRESHOLD | {COMPOSITE_DUP_THRESHOLD} |\n")
+        f.write(f"| MTB_HARD_FLOOR | {MTB_HARD_FLOOR} |\n")
+        f.write(f"| PDQ_HD_CEIL | {PDQ_HD_CEIL} |\n")
+        f.write(f"| PHASH_HD_CEIL | {PHASH_HD_CEIL} ✨ |\n")
+        f.write(f"| SIFT_MIN_MATCHES | {SIFT_MIN_MATCHES} |\n\n")
+
+        # Statistics
+        if comparisons:
+            f.write("## Statistics\n\n")
+            f.write("### All Comparisons\n\n")
+            f.write("| Metric | Mean | Median | Min | Max | Std Dev |\n")
+            f.write("|--------|------|--------|-----|-----|---------||\n")
+
+            for name, vals, fmt in [
+                ("MTB %", mtb_vals, ".2f"),
+                ("Edge %", edge_vals, ".2f"),
+                ("SSIM %", ssim_vals, ".2f"),
+                ("CLIP %", clip_vals, ".2f"),
+                ("PDQ HD", pdq_vals, "d"),
+                ("pHash HD ✨", phash_vals, "d"),
+                ("SIFT Matches", sift_vals, "d"),
+                ("Composite Score", score_vals, ".3f")
+            ]:
+                s = stats(vals)
+                if 'd' in fmt:
+                    f.write(f"| {name} | {s['mean']:.2f} | {s['median']:.2f} | {int(s['min'])} | {int(s['max'])} | {s['std']:.2f} |\n")
+                else:
+                    f.write(f"| {name} | {s['mean']:{fmt}} | {s['median']:{fmt}} | {s['min']:{fmt}} | {s['max']:{fmt}} | {s['std']:{fmt}} |\n")
+
+            f.write("\n### Dropped vs Kept\n\n")
+            f.write("| Category | Count | Percentage |\n")
+            f.write("|----------|-------|------------|\n")
+            f.write(f"| **Dropped (Duplicates)** | {n_dropped} | {(n_dropped/len(comparisons)*100):.1f}% |\n")
+            f.write(f"| **Kept (Unique)** | {len(comparisons)-n_dropped+1} | {((len(comparisons)-n_dropped+1)/len(comparisons)*100):.1f}% |\n\n")
+
+        # Dropped images
+        if dropped_images:
+            f.write(f"## Dropped Images ({len(dropped_images)})\n\n")
+            f.write("These images were identified as duplicates and removed:\n\n")
+
+            for img_path in dropped_images:
+                img_name = Path(img_path).name
+                thumb_name = f"{folder_name}_{Path(img_path).stem}_thumb.jpg"
+                thumb_path = thumb_dir / thumb_name
+
+                # Generate thumbnail
+                generate_thumbnail(img_path, str(thumb_path))
+
+                f.write(f"### {img_name}\n\n")
+                f.write(f"![{img_name}](thumbnails/{thumb_name})\n\n")
+                f.write(f"**Path:** `{img_path}`\n\n")
+
+        # Kept images
+        kept_images = [g[0] for g in groups_after]
+        if kept_images:
+            f.write(f"## Kept Images ({len(kept_images)})\n\n")
+            f.write("These images were kept as unique:\n\n")
+
+            for img_path in kept_images:
+                img_name = Path(img_path).name
+                thumb_name = f"{folder_name}_{Path(img_path).stem}_thumb.jpg"
+                thumb_path = thumb_dir / thumb_name
+
+                # Generate thumbnail
+                generate_thumbnail(img_path, str(thumb_path))
+
+                f.write(f"### {img_name}\n\n")
+                f.write(f"![{img_name}](thumbnails/{thumb_name})\n\n")
+                f.write(f"**Path:** `{img_path}`\n\n")
+
+    logger.info(f"Report generated: {report_path}")
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Near-duplicate image remover with pHash")
+    parser.add_argument("--folders", nargs="+", default=None,
+                        help="Folder names/numbers to process (e.g., 1 2 3 4)")
+    parser.add_argument("--per-folder", action="store_true",
+                        help="Process each folder separately and generate individual reports")
+    parser.add_argument("--output-dir", type=str, default=".",
+                        help="Directory to save reports and thumbnails")
     parser.add_argument("--log-experiment", type=str, default=None,
                         help="Name for this experiment")
     parser.add_argument("--log-file", type=str, default="experiment_phash_logs.md",
                         help="File to log experiment results to")
     args = parser.parse_args()
 
-    # Test folders
-    folders = [
-        "photos-706-winchester-blvd--los-gatos--ca-9",
-        "photos-75-knollview-way--san-francisco--ca"
-    ]
-    groups = []
-    for folder in folders:
-        if Path(folder).exists():
-            folder_images = sorted(Path(folder).glob("*.jpg"))
-            for img in folder_images:
-                groups.append([str(img)])
+    # Create output directory
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Fallback: Hardcoded paths
-    if not groups:
-        groups = [
-            [r"combined\008_Nancy Peppin - IMG_0009.jpg"],
-            [r"combined\009_Nancy Peppin - IMG_0003.jpg"],
-            [r"combined\050_Scott Wall - DSC_0098.jpg"],
-            [r"combined\053_Scott Wall - DSC_0143.jpg"],
+    if args.folders and args.per_folder:
+        # Process each folder separately
+        for folder_name in args.folders:
+            # Try multiple path options
+            possible_paths = [
+                Path(folder_name),
+                Path(folder_name) / "processed",
+            ]
+
+            folder_path = None
+            groups = []
+
+            # Find the first path that has images
+            for path in possible_paths:
+                if path.exists():
+                    image_files = sorted(path.glob("*.jpg")) + sorted(path.glob("*.png"))
+                    if image_files:
+                        folder_path = path
+                        for img in image_files:
+                            groups.append([str(img)])
+                        break
+
+            if not folder_path or not groups:
+                logger.warning(f"No images found in {folder_name} or {folder_name}/processed, skipping...")
+                continue
+
+            logger.info(f"\n{'='*60}")
+            logger.info(f"Processing folder: {folder_name}")
+            logger.info(f"Path: {folder_path}")
+            logger.info(f"{'='*60}\n")
+
+            logger.info(f"Found {len(groups)} images in {folder_name}")
+
+            # Track comparisons and dropped images
+            groups_before = groups.copy()
+
+            # Enable experiment logger to track comparisons
+            _experiment_logger = ExperimentLogger()
+            _experiment_logger.start_capture()
+            _experiment_logger.input_count = len(groups)
+
+            # Run deduplication
+            logger.info(f"Running deduplication on {folder_name}...")
+            filtered = remove_near_duplicates(groups, deduplication_flag=1, full_scan=False)
+
+            _experiment_logger.output_count = len(filtered)
+            _experiment_logger.stop_capture()
+
+            # Identify dropped images
+            before_paths = {g[0] for g in groups_before}
+            after_paths = {g[0] for g in filtered}
+            dropped_image_paths = list(before_paths - after_paths)
+
+            logger.info(f"Results: {len(groups_before)} → {len(filtered)} ({len(dropped_image_paths)} removed)")
+
+            # Generate report with comparison data
+            generate_folder_report(
+                folder_name=folder_name,
+                output_dir=str(output_dir),
+                groups_before=groups_before,
+                groups_after=filtered,
+                comparisons=_experiment_logger.comparison_results,
+                dropped_images=dropped_image_paths
+            )
+
+            # Clear metric store for next folder
+            _metric_store.clear()
+            _pair_sim.cache_clear()
+            _load_gray.cache_clear()
+
+    else:
+        # Original behavior - single run
+        # Test folders
+        folders = [
+            "photos-706-winchester-blvd--los-gatos--ca-9",
+            "photos-75-knollview-way--san-francisco--ca"
         ]
+        groups = []
+        for folder in folders:
+            if Path(folder).exists():
+                folder_images = sorted(Path(folder).glob("*.jpg"))
+                for img in folder_images:
+                    groups.append([str(img)])
 
-    # Setup experiment logging if requested
-    if args.log_experiment:
-        _experiment_logger = ExperimentLogger()
-        _experiment_logger.start_capture()
-        _experiment_logger.input_count = len(groups)
+        # Fallback: Hardcoded paths
+        if not groups:
+            groups = [
+                [r"combined\008_Nancy Peppin - IMG_0009.jpg"],
+                [r"combined\009_Nancy Peppin - IMG_0003.jpg"],
+                [r"combined\050_Scott Wall - DSC_0098.jpg"],
+                [r"combined\053_Scott Wall - DSC_0143.jpg"],
+            ]
 
-    logger.info(f"Number of groups before deduplication: {len(groups)}")
-    logger.info(f"Using 6 metrics: MTB + SSIM + CLIP + PDQ + pHash ✨ + SIFT")
-    logger.info(f"Using full_scan=False: Only comparing adjacent images (sequential pairs)")
-    filtered = remove_near_duplicates(groups, deduplication_flag=1, full_scan=False)
-    logger.info(f"Number of groups after deduplication: {len(filtered)}")
+        # Setup experiment logging if requested
+        if args.log_experiment:
+            _experiment_logger = ExperimentLogger()
+            _experiment_logger.start_capture()
+            _experiment_logger.input_count = len(groups)
 
-    # Write experiment log if requested
-    if args.log_experiment and _experiment_logger:
-        _experiment_logger.output_count = len(filtered)
-        terminal_output = _experiment_logger.stop_capture()
-        _experiment_logger.write_experiment_log(args.log_experiment, terminal_output, args.log_file)
+        logger.info(f"Number of groups before deduplication: {len(groups)}")
+        logger.info(f"Using 6 metrics: MTB + SSIM + CLIP + PDQ + pHash ✨ + SIFT")
+        logger.info(f"Using full_scan=False: Only comparing adjacent images (sequential pairs)")
+        filtered = remove_near_duplicates(groups, deduplication_flag=1, full_scan=False)
+        logger.info(f"Number of groups after deduplication: {len(filtered)}")
+
+        # Write experiment log if requested
+        if args.log_experiment and _experiment_logger:
+            _experiment_logger.output_count = len(filtered)
+            terminal_output = _experiment_logger.stop_capture()
+            _experiment_logger.write_experiment_log(args.log_experiment, terminal_output, args.log_file)
